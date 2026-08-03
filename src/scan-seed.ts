@@ -8,6 +8,7 @@ import {
 import {
   decodeSeedNibbles,
   seedNibbleSlot,
+  seedParityByteCount,
   seedSlotCount
 } from "./seed.ts";
 
@@ -47,7 +48,7 @@ function strongestEvidence(
   }
 
   values.sort((left, right) => right - left);
-  const count = Math.max(2, Math.round(values.length * 0.16));
+  const count = Math.max(4, Math.round(values.length * 0.24));
   const selected = values.slice(0, count);
 
   return selected.reduce((sum, value) => sum + value, 0) /
@@ -67,7 +68,7 @@ function symbolScore(
     image,
     point.x * scale,
     point.y * scale,
-    Math.max(2, Math.round(3 * scale)),
+    Math.max(3, Math.round(5 * scale)),
     palette
   );
 }
@@ -90,7 +91,13 @@ function observeNibble(
   const margin = best.score - second.score;
   const confidence = clamp(margin / Math.max(0.01, best.score), 0, 1);
 
-  if (best.score < 0.12 || margin < 0.035) {
+  /*
+   * The v3 markers are larger and isolated by a background-coloured halo. A
+   * lower absolute threshold avoids turning camera softness into an erasure,
+   * while the doubled parity budget and final codeword validation still reject
+   * conflicting observations.
+   */
+  if (best.score < 0.075 || margin < 0.016) {
     return { value: null, confidence };
   }
 
@@ -137,9 +144,9 @@ export function recoverSeedObservations(
     candidates.push({ byte, confidence });
   }
 
-  if (erased.size > 16) {
+  if (erased.size > seedParityByteCount) {
     throw new Error(
-      `Too many uncertain star bytes (${erased.size}); hold the identicon flatter and closer`
+      `Too many uncertain star bytes (${erased.size}); this code can recover ${seedParityByteCount}`
     );
   }
 
@@ -148,7 +155,7 @@ export function recoverSeedObservations(
   let candidateIndex = 0;
   let lastError: unknown;
 
-  while (erased.size <= 16) {
+  while (erased.size <= seedParityByteCount) {
     try {
       const seed = decodeSeedNibbles(values, paletteIndex);
       const retained = observations.filter((observation, slot) => {
@@ -171,7 +178,7 @@ export function recoverSeedObservations(
       lastError = error;
     }
 
-    if (erased.size === 16) break;
+    if (erased.size === seedParityByteCount) break;
 
     const next = candidates[candidateIndex];
     candidateIndex += 1;
