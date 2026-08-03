@@ -14,21 +14,27 @@ import {
 import {
   findOrientation,
   observePalette,
+  swapPalette,
   type ObservedPalette
 } from "./scan-colour.ts";
-import { readSeed } from "./scan-seed.ts";
+import {
+  readPaletteCorrection,
+  type PaletteCorrectionReading
+} from "./scan-seed.ts";
 import {
   classifyConstellation,
   classifySigns,
   type SignReading,
   type SignResult
 } from "./scan-sign.ts";
+import { canonicalPaletteSeed } from "./seed.ts";
 import type { IdenticonInput } from "./types.ts";
 
 export interface ScanResult extends IdenticonInput {
   paletteIndex: number;
   orientation: number;
-  erasedBytes: number;
+  uncertainStars: number;
+  correctionMismatches: number;
   signs: SignReading;
 }
 
@@ -41,7 +47,12 @@ interface OrientedFrame {
   data: ImageData;
   angle: number;
   constellation: SignResult;
+  palette: ObservedPalette;
 }
+
+const automaticInterval = 260;
+const retryInterval = 520;
+const stableFrameCount = 2;
 
 function required<T extends Element>(selector: string): T {
   const value = document.querySelector<T>(selector);
@@ -115,8 +126,7 @@ function loadImage(file: File): Promise<HTMLImageElement> {
 
 function captureImage(
   image: HTMLImageElement,
-  canvas: HTMLCanvasElement,
-  size = 720
+  canvas: HTMLCanvasElement
 ): void {
   const width = image.naturalWidth;
   const height = image.naturalHeight;
@@ -126,11 +136,12 @@ function captureImage(
   }
 
   const sourceSize = Math.min(width, height);
+  const targetSize = Math.min(1440, Math.max(1024, sourceSize));
   const sourceX = (width - sourceSize) / 2;
   const sourceY = (height - sourceSize) / 2;
 
-  canvas.width = size;
-  canvas.height = size;
+  canvas.width = targetSize;
+  canvas.height = targetSize;
   context(canvas).drawImage(
     image,
     sourceX,
@@ -139,8 +150,8 @@ function captureImage(
     sourceSize,
     0,
     0,
-    size,
-    size
+    targetSize,
+    targetSize
   );
 }
 
@@ -161,7 +172,7 @@ async function orientationCandidates(
     const constellation = await classifyConstellation(data, palette);
 
     if (!best || constellation.score > best.constellation.score) {
-      best = { canvas, data, angle, constellation };
+      best = { canvas, data, angle, constellation, palette };
     }
   }
 
@@ -179,9 +190,30 @@ async function orientationCandidates(
     const constellation = await classifyConstellation(data, palette);
 
     if (constellation.score <= best.constellation.score) continue;
-    best = { canvas, data, angle, constellation };
+    best = { canvas, data, angle, constellation, palette };
   }
 
+  return best;
+}
+
+async function bestOrientation(
+  source: HTMLCanvasElement,
+  rawData: ImageData,
+  observed: ObservedPalette
+): Promise<OrientedFrame> {
+  const palettes = [observed, swapPalette(observed)];
+  let best: OrientedFrame | undefined;
+
+  for (const palette of palettes) {
+    const anchor = findOrientation(rawData, palette);
+    const candidate = await orientationCandidates(source, palette, anchor.angle);
+
+    if (!best || candidate.constellation.score > best.constellation.score) {
+      best = candidate;
+    }
+  }
+
+  if (!best) throw new Error("Could not orient the identicon");
   return best;
 }
 
@@ -203,12 +235,35 @@ function confidenceWarning(signs: SignReading): string | undefined {
 function resultText(result: ScanResult): string {
   const warning = confidenceWarning(result.signs);
   const details = [
-    `Seed ${result.seed}`,
-    `${result.erasedBytes} corrected or uncertain byte${result.erasedBytes === 1 ? "" : "s"}`,
+    `Palette seed ${result.seed}`,
+    `${result.uncertainStars} uncertain correction star${result.uncertainStars === 1 ? "" : "s"}`,
+    `${result.correctionMismatches} corrected mismatch${result.correctionMismatches === 1 ? "" : "es"}`,
     warning
   ].filter(Boolean);
 
   return details.join(" · ");
+}
+
+function softFailure(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+
+  if (message.includes("correction")) {
+    return "Identicon found. Resolving the palette correction stars…";
+  }
+
+  if (message.includes("orientation") || message.includes("orient")) {
+    return "Identicon found. Resolving its upright orientation…";
+  }
+
+  return "Identicon found. Hold it steady while the scanner resolves the details…";
+}
+
+function circlesMatch(left: Circle, right: Circle): boolean {
+  const tolerance = Math.max(6, right.radius * 0.035);
+  const centreShift = Math.hypot(left.x - right.x, left.y - right.y);
+  const radiusShift = Math.abs(left.radius - right.radius);
+
+  return centreShift <= tolerance && radiusShift <= tolerance;
 }
 
 export class Scanner {
@@ -217,7 +272,6 @@ export class Scanner {
   readonly #capture = required<HTMLCanvasElement>("#scan-capture");
   readonly #normalised = required<HTMLCanvasElement>("#scan-normalised");
   readonly #status = required<HTMLParagraphElement>("#scan-status");
-  readonly #read = required<HTMLButtonElement>("#scan-read");
   readonly #upload = required<HTMLButtonElement>("#scan-upload");
   readonly #file = required<HTMLInputElement>("#scan-file");
   readonly #close = required<HTMLButtonElement>("#scan-close");
@@ -225,17 +279,16 @@ export class Scanner {
 
   #stream: MediaStream | undefined;
   #openRequest: Promise<void> | undefined;
+  #timer: number | undefined;
+  #lastCircle: Circle | undefined;
+  #stableFrames = 0;
+  #decoding = false;
   #session = 0;
 
   constructor(options: ScannerOptions) {
     this.#options = options;
-    this.#read.disabled = true;
 
     this.#close.addEventListener("click", () => this.close());
-    this.#read.addEventListener("click", () => {
-      void this.readCamera().catch((error) => this.processingError(error));
-    });
-
     this.#upload.addEventListener("click", () => this.#file.click());
     this.#file.addEventListener("change", () => {
       const file = this.#file.files?.[0];
@@ -275,7 +328,6 @@ export class Scanner {
     const session = ++this.#session;
 
     this.#dialog.showModal();
-    this.#read.disabled = true;
     this.#upload.disabled = false;
     this.message(
       "Scanner ready. Requesting camera access… You can use a saved photo immediately."
@@ -308,10 +360,10 @@ export class Scanner {
         return;
       }
 
-      this.#read.disabled = false;
       this.message(
-        "Camera ready. Keep the complete outer circle inside the guide, then read the frame."
+        "Camera ready. Keep the complete outer circle inside the guide; recognition is automatic."
       );
+      this.scheduleAutomatic(0);
     } catch (error) {
       if (session !== this.#session) return;
       this.cameraError(error);
@@ -319,26 +371,72 @@ export class Scanner {
   }
 
   private stop(): void {
+    if (this.#timer !== undefined) window.clearTimeout(this.#timer);
+    this.#timer = undefined;
+    this.#lastCircle = undefined;
+    this.#stableFrames = 0;
+    this.#decoding = false;
+
     if (this.#stream) stopStream(this.#stream);
     this.#stream = undefined;
     this.#video.srcObject = null;
-    this.#read.disabled = true;
     this.#upload.disabled = false;
   }
 
-  private async readCamera(): Promise<void> {
-    if (!this.#stream) {
-      throw new Error("The camera is not ready. Use a saved photo or retry the scanner.");
-    }
+  private scheduleAutomatic(delay = automaticInterval): void {
+    if (!this.#stream || !this.#dialog.open) return;
+    if (this.#timer !== undefined) window.clearTimeout(this.#timer);
 
-    this.setBusy(true);
-    this.message("Capturing the camera frame…");
+    this.#timer = window.setTimeout(() => {
+      this.#timer = undefined;
+      void this.automaticFrame();
+    }, delay);
+  }
+
+  private updateStability(circle: Circle): number {
+    const stable = this.#lastCircle && circlesMatch(this.#lastCircle, circle);
+    this.#stableFrames = stable ? this.#stableFrames + 1 : 1;
+    this.#lastCircle = circle;
+    return this.#stableFrames;
+  }
+
+  private async automaticFrame(): Promise<void> {
+    if (!this.#stream || !this.#dialog.open) return;
+    if (this.#decoding) {
+      this.scheduleAutomatic();
+      return;
+    }
 
     try {
       captureVideo(this.#video, this.#capture);
-      await this.decodeCapture();
+      const circle = findOuterCircle(this.#capture);
+
+      if (!circle) {
+        this.#lastCircle = undefined;
+        this.#stableFrames = 0;
+        this.message("Looking for the complete outer circle…");
+        this.scheduleAutomatic();
+        return;
+      }
+
+      if (this.updateStability(circle) < stableFrameCount) {
+        this.message("Outer circle found. Hold the identicon steady…");
+        this.scheduleAutomatic();
+        return;
+      }
+
+      this.#decoding = true;
+      this.message("Identicon recognised. Resolving palette correction and signs…");
+
+      const result = await this.decodeCircle(circle);
+      this.#options.apply(result);
+      this.stop();
+      this.message(resultText(result), false);
+    } catch (error) {
+      this.message(softFailure(error));
+      this.scheduleAutomatic(retryInterval);
     } finally {
-      this.setBusy(false);
+      this.#decoding = false;
     }
   }
 
@@ -347,40 +445,32 @@ export class Scanner {
       throw new Error("Choose an image file containing an astral identicon");
     }
 
-    this.setBusy(true);
+    this.#upload.disabled = true;
     this.message("Opening the selected photo…");
 
     try {
       const image = await loadImage(file);
       captureImage(image, this.#capture);
-      await this.decodeCapture();
+      const circle = findOuterCircle(this.#capture) ?? guideCircle(this.#capture);
+      const result = await this.decodeCircle(circle);
+
+      this.#options.apply(result);
+      this.stop();
+      this.message(resultText(result), false);
     } finally {
-      this.setBusy(false);
+      this.#upload.disabled = false;
     }
   }
 
-  private async decodeCapture(): Promise<void> {
-    this.message("Finding and normalising the identicon…");
-
-    const detectedCircle = findOuterCircle(this.#capture);
-    const circle = detectedCircle ?? guideCircle(this.#capture);
-
-    if (!detectedCircle) {
-      this.message(
-        "The outer circle was not detected automatically; using the centred guide alignment…"
-      );
-    }
-
+  private async decodeCircle(circle: Circle): Promise<ScanResult> {
     normaliseCircle(this.#capture, circle, this.#normalised);
-    const rawData = imageData(this.#normalised);
-    const palette = observePalette(rawData);
-    const anchor = findOrientation(rawData, palette);
 
-    this.message("Checking the upright constellation and fixed sign references…");
-    const oriented = await orientationCandidates(
+    const rawData = imageData(this.#normalised);
+    const observed = observePalette(rawData);
+    const oriented = await bestOrientation(
       this.#normalised,
-      palette,
-      anchor.angle
+      rawData,
+      observed
     );
 
     const normalisedContext = context(this.#normalised);
@@ -392,37 +482,30 @@ export class Scanner {
     );
     normalisedContext.drawImage(oriented.canvas, 0, 0);
 
-    this.message("Reading the coded stars and correcting uncertain bytes…");
-    const seed = readSeed(oriented.data, palette);
-
-    this.message("Classifying the upright and ring glyphs…");
+    const correction: PaletteCorrectionReading = readPaletteCorrection(
+      oriented.data,
+      oriented.palette
+    );
     const signs = await classifySigns(
       oriented.data,
-      palette,
+      oriented.palette,
       oriented.constellation
     );
 
-    const result: ScanResult = {
-      seed: seed.seed,
+    return {
+      seed: canonicalPaletteSeed(correction.index),
       solar: signs.solar.sign,
       lunar: signs.lunar.sign,
       ascendant: signs.ascendant.sign,
       midheaven: signs.midheaven.sign,
       descendant: signs.descendant.sign,
       imumCoeli: signs.imumCoeli.sign,
-      paletteIndex: palette.index,
+      paletteIndex: correction.index,
       orientation: oriented.angle,
-      erasedBytes: seed.erasures,
+      uncertainStars: correction.uncertainStars,
+      correctionMismatches: correction.mismatches,
       signs
     };
-
-    this.#options.apply(result);
-    this.message(resultText(result), false);
-  }
-
-  private setBusy(value: boolean): void {
-    this.#read.disabled = value || !this.#stream;
-    this.#upload.disabled = value;
   }
 
   private message(value: string, busy = true): void {
@@ -439,6 +522,6 @@ export class Scanner {
   private processingError(error: unknown): void {
     this.#status.textContent = error instanceof Error ? error.message : String(error);
     this.#status.className = "scan-status error";
-    this.setBusy(false);
+    this.#upload.disabled = false;
   }
 }
