@@ -14,13 +14,19 @@ export interface CodeAnchor {
 
 const innerGap = 8;
 export const innerClipRadius = innerRingRadius - ringStroke / 2 - innerGap;
-export const starCodeRadius = innerClipRadius - 54;
-export const goldenAngle = Math.PI * (3 - Math.sqrt(5));
+export const codeTrackCount = 4;
+export const codeSectorCount = seedSlotCount / codeTrackCount;
+export const codeSymbolSpacing = 10;
+export const codeTrackRadii = [210, 255, 300, 345] as const;
+
+if (!Number.isInteger(codeSectorCount)) {
+  throw new Error("seed slots must divide evenly across code tracks");
+}
 
 export const codeAnchors: readonly CodeAnchor[] = [
-  { angle: -90, radius: 358, size: 28 },
-  { angle: 134, radius: 354, size: 20 },
-  { angle: 246, radius: 350, size: 14 }
+  { angle: -90, radius: 370, size: 30 },
+  { angle: 134, radius: 366, size: 22 },
+  { angle: 246, radius: 362, size: 16 }
 ] as const;
 
 export function rotatePoint(point: Point, angle: number): Point {
@@ -45,18 +51,31 @@ export function codeAnchorPoint(anchor: CodeAnchor): Point {
   };
 }
 
-export function codeSlotPoint(slot: number): Point {
+function codeSlotGeometry(slot: number): {
+  angle: number;
+  radius: number;
+} {
   if (!Number.isInteger(slot) || slot < 0 || slot >= seedSlotCount) {
     throw new Error(`code slot must be between 0 and ${seedSlotCount - 1}`);
   }
 
-  const fraction = (slot + 0.5) / seedSlotCount;
-  const radius = 42 + Math.sqrt(fraction) * (starCodeRadius - 42);
-  const angle = slot * goldenAngle - Math.PI / 2;
+  const track = Math.floor(slot / codeSectorCount);
+  const sector = slot % codeSectorCount;
+  const phase = track % 2 === 0 ? 0 : 0.5;
+  const angle = ((sector + phase) / codeSectorCount) * Math.PI * 2 - Math.PI / 2;
 
   return {
-    x: centre + Math.cos(angle) * radius,
-    y: centre + Math.sin(angle) * radius
+    angle,
+    radius: codeTrackRadii[track]!
+  };
+}
+
+export function codeSlotPoint(slot: number): Point {
+  const geometry = codeSlotGeometry(slot);
+
+  return {
+    x: centre + Math.cos(geometry.angle) * geometry.radius,
+    y: centre + Math.sin(geometry.angle) * geometry.radius
   };
 }
 
@@ -65,13 +84,19 @@ export function codeSymbolPoint(slot: number, value: number): Point {
     throw new Error("code symbol must be a hexadecimal nibble");
   }
 
+  const geometry = codeSlotGeometry(slot);
   const base = codeSlotPoint(slot);
   const column = value >>> 2;
   const row = value & 0x03;
-  const spacing = 8;
+  const tangent = (column - 1.5) * codeSymbolSpacing;
+  const radial = (row - 1.5) * codeSymbolSpacing;
+  const radialX = Math.cos(geometry.angle);
+  const radialY = Math.sin(geometry.angle);
+  const tangentX = -radialY;
+  const tangentY = radialX;
 
   return {
-    x: base.x + (column - 1.5) * spacing,
-    y: base.y + (row - 1.5) * spacing
+    x: base.x + tangentX * tangent + radialX * radial,
+    y: base.y + tangentY * tangent + radialY * radial
   };
 }
