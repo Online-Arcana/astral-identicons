@@ -1,9 +1,5 @@
 import { centre, innerRingRadius, ringStroke } from "./layout.ts";
-import {
-  paletteCorrectionSectorCount,
-  paletteCorrectionTrackCount,
-  seedSlotCount
-} from "./seed.ts";
+import { seedSlotCount } from "./seed.ts";
 
 export interface Point {
   x: number;
@@ -18,14 +14,13 @@ export interface CodeAnchor {
 
 const innerGap = 8;
 export const innerClipRadius = innerRingRadius - ringStroke / 2 - innerGap;
-export const codeTrackCount = paletteCorrectionTrackCount;
-export const codeSectorCount = paletteCorrectionSectorCount;
-export const codeBitOffset = 12;
-export const codeBitSeparation = codeBitOffset * 2;
-export const codeTrackRadii = [175, 230, 285, 340] as const;
+export const codeTrackCount = 4;
+export const codeSectorCount = seedSlotCount / codeTrackCount;
+export const codeSymbolSpacing = 10;
+export const codeTrackRadii = [220, 265, 310, 355] as const;
 
-if (codeTrackRadii.length !== codeTrackCount) {
-  throw new Error("correction track geometry does not match the palette code");
+if (!Number.isInteger(codeSectorCount)) {
+  throw new Error("seed slots must divide evenly across code tracks");
 }
 
 export const codeAnchors: readonly CodeAnchor[] = [
@@ -59,11 +54,9 @@ export function codeAnchorPoint(anchor: CodeAnchor): Point {
 function codeSlotGeometry(slot: number): {
   angle: number;
   radius: number;
-  track: number;
-  sector: number;
 } {
   if (!Number.isInteger(slot) || slot < 0 || slot >= seedSlotCount) {
-    throw new Error(`correction slot must be between 0 and ${seedSlotCount - 1}`);
+    throw new Error(`code slot must be between 0 and ${seedSlotCount - 1}`);
   }
 
   const track = Math.floor(slot / codeSectorCount);
@@ -73,9 +66,7 @@ function codeSlotGeometry(slot: number): {
 
   return {
     angle,
-    radius: codeTrackRadii[track]!,
-    track,
-    sector
+    radius: codeTrackRadii[track]!
   };
 }
 
@@ -88,16 +79,24 @@ export function codeSlotPoint(slot: number): Point {
   };
 }
 
-export function codeSymbolPoint(slot: number, bit: 0 | 1): Point {
-  if (bit !== 0 && bit !== 1) {
-    throw new Error("palette correction symbols must be binary");
+export function codeSymbolPoint(slot: number, value: number): Point {
+  if (!Number.isInteger(value) || value < 0 || value > 15) {
+    throw new Error("code symbol must be a hexadecimal nibble");
   }
 
   const geometry = codeSlotGeometry(slot);
-  const radius = geometry.radius + (bit === 0 ? -codeBitOffset : codeBitOffset);
+  const base = codeSlotPoint(slot);
+  const column = value >>> 2;
+  const row = value & 0x03;
+  const tangent = (column - 1.5) * codeSymbolSpacing;
+  const radial = (row - 1.5) * codeSymbolSpacing;
+  const radialX = Math.cos(geometry.angle);
+  const radialY = Math.sin(geometry.angle);
+  const tangentX = -radialY;
+  const tangentY = radialX;
 
   return {
-    x: centre + Math.cos(geometry.angle) * radius,
-    y: centre + Math.sin(geometry.angle) * radius
+    x: base.x + tangentX * tangent + radialX * radial,
+    y: base.y + tangentY * tangent + radialY * radial
   };
 }

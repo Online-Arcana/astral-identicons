@@ -1,15 +1,12 @@
 import { buildIdenticon } from "./build.ts";
 import { palette } from "./palette.ts";
 import { Scanner } from "./scan.ts";
-import {
-  canonicalPaletteSeed,
-  seedPaletteIndex
-} from "./seed.ts";
+import { seedPaletteIndex } from "./seed.ts";
 import { label, signs, type Sign } from "./sign.ts";
 import type { AssetSource, IdenticonInput } from "./types.ts";
 
 const defaults: IdenticonInput = {
-  seed: "6270f2-example",
+  seed: "62-70-F2-Example",
   solar: "capricorn",
   lunar: "virgo",
   ascendant: "capricorn",
@@ -100,13 +97,9 @@ function getAsset(path: string): Promise<string> {
 
   if (!request) {
     request = fetch(path).then(async (response) => {
-      if (!response.ok) {
-        throw new Error(`Could not load asset: ${path}`);
-      }
-
+      if (!response.ok) throw new Error(`Could not load asset: ${path}`);
       return response.text();
     });
-
     assetCache.set(path, request);
   }
 
@@ -114,17 +107,9 @@ function getAsset(path: string): Promise<string> {
 }
 
 const browserAssets: AssetSource = {
-  constellation: (sign) => {
-    return getAsset(`/assets/constellations/${sign}.svg`);
-  },
-
-  sigil: (sign) => {
-    return getAsset(`/assets/sigils/${sign}.svg`);
-  },
-
-  star: () => {
-    return getAsset("/assets/decor/star.svg");
-  }
+  constellation: (sign) => getAsset(`/assets/constellations/${sign}.svg`),
+  sigil: (sign) => getAsset(`/assets/sigils/${sign}.svg`),
+  star: () => getAsset("/assets/decor/star.svg")
 };
 
 function showPalette(valuePalette: ReturnType<typeof palette>): void {
@@ -160,25 +145,14 @@ function showPalette(valuePalette: ReturnType<typeof palette>): void {
 }
 
 function showSvg(source: string): void {
-  const documentValue = new DOMParser().parseFromString(
-    source,
-    "image/svg+xml"
-  );
-
+  const documentValue = new DOMParser().parseFromString(source, "image/svg+xml");
   const error = documentValue.querySelector("parsererror");
-
-  if (error) {
-    throw new Error("Generated output is not valid SVG");
-  }
+  if (error) throw new Error("Generated output is not valid SVG");
 
   const root = documentValue.documentElement;
+  if (root.localName !== "svg") throw new Error("Generated output is not an SVG document");
 
-  if (root.localName !== "svg") {
-    throw new Error("Generated output is not an SVG document");
-  }
-
-  const node = document.importNode(root, true);
-  preview.replaceChildren(node);
+  preview.replaceChildren(document.importNode(root, true));
 }
 
 async function render(): Promise<void> {
@@ -191,31 +165,23 @@ async function render(): Promise<void> {
     return;
   }
 
-  status.textContent = "Building preview…";
+  status.textContent = "Building preview...";
   status.className = "status";
 
   const svg = await buildIdenticon(data, browserAssets);
-
-  if (version !== renderVersion) {
-    return;
-  }
+  if (version !== renderVersion) return;
 
   latestSvg = svg;
-
   showSvg(svg);
   showPalette(palette(data.seed));
 
   const paletteIndex = seedPaletteIndex(data.seed);
-  status.textContent =
-    `Palette seed ${canonicalPaletteSeed(paletteIndex)}. Colours suggest the palette; correction stars resolve camera ambiguity.`;
+  status.textContent = `The exact seed and all six signs are encoded in the correction stars. Palette ${paletteIndex.toString(16).padStart(2, "0").toUpperCase()} and the duplicate glyphs provide independent recognition evidence.`;
   status.className = "status";
 }
 
 function showError(error: unknown): void {
-  status.textContent = error instanceof Error
-    ? error.message
-    : String(error);
-
+  status.textContent = error instanceof Error ? error.message : String(error);
   status.className = "status error";
 }
 
@@ -223,10 +189,14 @@ let timer = 0;
 
 function schedule(): void {
   window.clearTimeout(timer);
-
   timer = window.setTimeout(() => {
     void render().catch(showError);
   }, 90);
+}
+
+function correctionSummary(bytes: number): string {
+  if (bytes === 0) return "No star bytes required reconstruction.";
+  return `Error correction reconstructed ${bytes} star byte${bytes === 1 ? "" : "s"}.`;
 }
 
 const scanner = new Scanner({
@@ -234,8 +204,7 @@ const scanner = new Scanner({
     apply(result);
 
     void render().then(() => {
-      status.textContent =
-        `Camera recovered ${result.seed} and all six signs using the correction stars, with ${result.uncertainStars} uncertain star${result.uncertainStars === 1 ? "" : "s"}.`;
+      status.textContent = `Camera recovered the exact seed "${result.seed}" and all six signs. ${correctionSummary(result.correctedBytes)}`;
       status.className = "status";
     }).catch(showError);
   }
@@ -247,24 +216,35 @@ scan.addEventListener("click", () => {
   void scanner.open().catch(showError);
 });
 
-randomButton.addEventListener("click", () => {
-  const random = crypto.getRandomValues(new Uint8Array(1))[0]!;
-  const seed = canonicalPaletteSeed(random & 0x3f);
+function randomSeed(): string {
+  return [...crypto.getRandomValues(new Uint8Array(16))]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
 
-  form.querySelector<HTMLInputElement>("#seed")!.value = seed;
+randomButton.addEventListener("click", () => {
+  form.querySelector<HTMLInputElement>("#seed")!.value = randomSeed();
   schedule();
 });
+
+function fileSeed(seed: string): string {
+  const safe = seed
+    .replace(/[^a-z0-9]+/giu, "-")
+    .replace(/^-+|-+$/gu, "")
+    .slice(0, 32);
+
+  return safe || "seed";
+}
 
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
 
   save.disabled = true;
-  status.textContent = "Preparing SVG…";
+  status.textContent = "Preparing SVG...";
   status.className = "status";
 
   try {
     const data = value();
-    const paletteSeed = canonicalPaletteSeed(seedPaletteIndex(data.seed));
     const svg = await buildIdenticon(data, browserAssets);
     latestSvg = svg;
 
@@ -276,15 +256,11 @@ form.addEventListener("submit", async (event) => {
     const link = document.createElement("a");
 
     link.href = url;
-    link.download = `astrological-identicon-${data.solar}-${paletteSeed}.svg`;
+    link.download = `astrological-identicon-${data.solar}-${fileSeed(data.seed)}.svg`;
     link.click();
 
-    window.setTimeout(() => {
-      URL.revokeObjectURL(url);
-    }, 0);
-
-    status.textContent =
-      `Saved standalone SVG with recoverable palette seed ${paletteSeed}.`;
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
+    status.textContent = "Saved standalone SVG with the exact recoverable seed and signs.";
   } catch (error) {
     showError(error);
   } finally {

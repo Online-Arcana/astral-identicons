@@ -5,34 +5,29 @@ import {
   type ObservedPalette
 } from "./scan-colour.ts";
 import {
-  paletteCorrectionBit,
-  paletteCount,
+  decodeSeedNibbles,
+  seedNibbleSlot,
+  seedParityByteCount,
   seedSlotCount
 } from "./seed.ts";
+import type { IdenticonInput } from "./types.ts";
 
-export interface BitObservation {
-  value: 0 | 1 | null;
+export interface NibbleObservation {
+  value: number | null;
   confidence: number;
 }
 
-export interface PaletteCorrectionReading {
-  index: number;
+export interface SeedReading {
+  value: IdenticonInput;
+  erasures: number;
   confidence: number;
   uncertainStars: number;
-  mismatches: number;
-  observations: readonly BitObservation[];
+  nibbles: readonly (number | null)[];
 }
 
-interface RankedBit {
-  value: 0 | 1;
+interface RankedSymbol {
+  value: number;
   score: number;
-}
-
-interface RankedPalette {
-  index: number;
-  score: number;
-  starCost: number;
-  mismatches: number;
 }
 
 function clamp(value: number, minimum: number, maximum: number): number {
@@ -61,7 +56,7 @@ function strongestEvidence(
   }
 
   values.sort((left, right) => right - left);
-  const count = Math.max(4, Math.round(values.length * 0.28));
+  const count = Math.max(4, Math.round(values.length * 0.24));
   const selected = values.slice(0, count);
 
   return selected.reduce((sum, value) => sum + value, 0) /
@@ -71,134 +66,160 @@ function strongestEvidence(
 function symbolScore(
   image: ImageData,
   slot: number,
-  bit: 0 | 1,
+  value: number,
   palette: ObservedPalette
 ): number {
-  const point = codeSymbolPoint(slot, bit);
+  const point = codeSymbolPoint(slot, value);
   const scale = image.width / 1024;
 
   return strongestEvidence(
     image,
     point.x * scale,
     point.y * scale,
-    Math.max(3, Math.round(6 * scale)),
+    Math.max(3, Math.round(5 * scale)),
     palette
   );
 }
 
-function observeBit(
+function observeNibble(
   image: ImageData,
   slot: number,
   palette: ObservedPalette
-): BitObservation {
-  const scores: RankedBit[] = ([0, 1] as const)
-    .map((value) => ({
+): NibbleObservation {
+  const scores: RankedSymbol[] = Array.from(
+    { length: 16 },
+    (_unused, value) => ({
       value,
       score: symbolScore(image, slot, value, palette)
-    }))
-    .sort((left, right) => right.score - left.score);
+    })
+  ).sort((left, right) => right.score - left.score);
 
   const best = scores[0]!;
   const second = scores[1]!;
   const margin = best.score - second.score;
   const confidence = clamp(margin / Math.max(0.01, best.score), 0, 1);
 
-  if (best.score < 0.055 || margin < 0.01) {
+  if (best.score < 0.065 || margin < 0.014) {
     return { value: null, confidence };
   }
 
   return { value: best.value, confidence };
 }
 
-function paletteScore(
-  observations: readonly BitObservation[],
-  index: number,
-  colourHint: Pick<ObservedPalette, "index" | "confidence">
-): RankedPalette {
-  let mismatchWeight = 0;
-  let totalWeight = 0;
-  let mismatches = 0;
+function byteConfidence(
+  observations: readonly NibbleObservation[],
+  byte: number
+): number {
+  const high = observations[seedNibbleSlot(byte * 2)]!;
+  const low = observations[seedNibbleSlot(byte * 2 + 1)]!;
 
-  for (let slot = 0; slot < observations.length; slot += 1) {
-    const observation = observations[slot]!;
-    if (observation.value === null) continue;
-
-    const weight = 0.3 + observation.confidence * 0.7;
-    totalWeight += weight;
-
-    if (observation.value === paletteCorrectionBit(index, slot)) continue;
-    mismatchWeight += weight;
-    mismatches += 1;
-  }
-
-  const starCost = totalWeight === 0 ? 1 : mismatchWeight / totalWeight;
-
-  /*
-   * Camera colour is only a weak tie-breaker. The correction stars are the
-   * authoritative palette identifier because displays and cameras shift RGB.
-   */
-  const colourBias = index === colourHint.index
-    ? -0.02 * colourHint.confidence
-    : 0;
-
-  return {
-    index,
-    score: starCost + colourBias,
-    starCost,
-    mismatches
-  };
+  if (high.value === null || low.value === null) return -1;
+  return Math.min(high.confidence, low.confidence);
 }
 
-export function recoverPaletteCorrection(
-  observations: readonly BitObservation[],
-  colourHint: Pick<ObservedPalette, "index" | "confidence">
-): PaletteCorrectionReading {
+function eraseByte(values: Array<number | null>, byte: number): void {
+  values[seedNibbleSlot(byte * 2)] = null;
+  values[seedNibbleSlot(byte * 2 + 1)] = null;
+}
+
+function retainedConfidence(
+  observations: readonly NibbleObservation[],
+  erased: ReadonlySet<number>
+): number {
+  let total = 0;
+  let count = 0;
+
+  for (let byte = 0; byte < seedSlotCount / 2; byte += 1) {
+    if (erased.has(byte)) continue;
+
+    const high = observations[seedNibbleSlot(byte * 2)]!;
+    const low = observations[seedNibbleSlot(byte * 2 + 1)]!;
+    if (high.value === null || low.value === null) continue;
+
+    total += high.confidence + low.confidence;
+    count += 2;
+  }
+
+  return count === 0 ? 0 : total / count;
+}
+
+export function recoverSeedObservations(
+  observations: readonly NibbleObservation[]
+): SeedReading {
   if (observations.length !== seedSlotCount) {
-    throw new Error(`palette correction must contain exactly ${seedSlotCount} stars`);
+    throw new Error(`seed observation must contain exactly ${seedSlotCount} nibbles`);
   }
 
-  const observed = observations.filter((value) => value.value !== null).length;
-  const uncertainStars = observations.length - observed;
+  const values = observations.map((observation) => observation.value);
+  const erased = new Set<number>();
+  const candidates: Array<{ byte: number; confidence: number }> = [];
+  const uncertainStars = observations.filter((value) => value.value === null).length;
 
-  if (observed < 24) {
-    throw new Error("The palette correction stars are not clear enough yet");
+  for (let byte = 0; byte < seedSlotCount / 2; byte += 1) {
+    const confidence = byteConfidence(observations, byte);
+
+    if (confidence < 0) {
+      erased.add(byte);
+      eraseByte(values, byte);
+      continue;
+    }
+
+    candidates.push({ byte, confidence });
   }
 
-  const ranked = Array.from(
-    { length: paletteCount },
-    (_unused, index) => paletteScore(observations, index, colourHint)
-  ).sort((left, right) => left.score - right.score);
+  if (erased.size > seedParityByteCount) {
+    throw new Error(
+      `Too many uncertain star bytes (${erased.size}); this code can reconstruct ${seedParityByteCount}`
+    );
+  }
 
-  const best = ranked[0]!;
-  const second = ranked[1]!;
-  const margin = second.score - best.score;
-  const confidence = clamp(
-    margin / Math.max(0.01, second.starCost),
-    0,
-    1
+  candidates.sort((left, right) => left.confidence - right.confidence);
+
+  let candidateIndex = 0;
+  let lastError: unknown;
+
+  while (erased.size <= seedParityByteCount) {
+    try {
+      return {
+        value: decodeSeedNibbles(values),
+        erasures: erased.size,
+        confidence: retainedConfidence(observations, erased),
+        uncertainStars,
+        nibbles: [...values]
+      };
+    } catch (error) {
+      lastError = error;
+    }
+
+    if (erased.size === seedParityByteCount) break;
+
+    const next = candidates[candidateIndex];
+    candidateIndex += 1;
+
+    if (!next) break;
+    if (erased.has(next.byte)) continue;
+
+    erased.add(next.byte);
+    eraseByte(values, next.byte);
+  }
+
+  const message = lastError instanceof Error
+    ? lastError.message
+    : "visual payload recovery failed";
+
+  throw new Error(
+    `${message}; the star field contains too many conflicting observations`
   );
-
-  if (best.starCost > 0.34 || margin < 0.025) {
-    throw new Error("The palette correction pattern is not stable yet");
-  }
-
-  return {
-    index: best.index,
-    confidence,
-    uncertainStars,
-    mismatches: best.mismatches,
-    observations
-  };
 }
 
-export function readPaletteCorrection(
+export function readSeed(
   image: ImageData,
   palette: ObservedPalette
-): PaletteCorrectionReading {
+): SeedReading {
   const observations = Array.from(
     { length: seedSlotCount },
-    (_unused, slot) => observeBit(image, slot, palette)
+    (_unused, slot) => observeNibble(image, slot, palette)
   );
 
-  return recoverPaletteCorrection(observations, palette);
+  return recoverSeedObservations(observations);
 }
