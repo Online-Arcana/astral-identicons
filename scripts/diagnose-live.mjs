@@ -89,14 +89,45 @@ for (const [name, engine] of engines) {
     buffer: identicon
   });
 
-  await page.waitForFunction(() => {
-    const status = document.querySelector("#scan-status")?.textContent ?? "";
-    return status.startsWith("Seed ");
-  }, undefined, { timeout: 30_000 });
+  const statusLocator = page.locator("#scan-status");
+  let previous = "";
+  let final = "";
+  let failed = false;
+  const started = Date.now();
 
-  const status = await page.locator("#scan-status").textContent();
+  while (Date.now() - started < 60_000) {
+    const status = (await statusLocator.textContent()) ?? "";
+    const classes = (await statusLocator.getAttribute("class")) ?? "";
+
+    if (status !== previous) {
+      console.log(`${name}: scanner-status=${status}`);
+      previous = status;
+    }
+
+    if (status.startsWith("Seed ")) {
+      final = status;
+      break;
+    }
+
+    if (classes.includes("error")) {
+      final = status;
+      failed = true;
+      break;
+    }
+
+    await page.waitForTimeout(250);
+  }
+
   console.log(`${name}: preview=${preview.width}x${preview.height}`);
-  console.log(`${name}: scanner-status=${status}`);
+  console.log(`${name}: elapsed=${Date.now() - started}ms`);
+
+  if (!final) {
+    throw new Error(`${name}: decoder remained pending at: ${previous}`);
+  }
+
+  if (failed) {
+    throw new Error(`${name}: decoder failed at: ${final}`);
+  }
 
   if (errors.length > 0) {
     throw new Error(`${name}: ${errors.join(" | ")}`);
