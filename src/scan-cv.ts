@@ -1,4 +1,8 @@
-import { innerRingRadius, outerRingRadius } from "./layout.ts";
+import {
+  canvas,
+  innerRingRadius,
+  outerRingRadius
+} from "./layout.ts";
 
 export interface Circle {
   x: number;
@@ -11,6 +15,12 @@ export interface PixelFrame {
   width: number;
   height: number;
   data: Uint8ClampedArray;
+}
+
+export interface NormalisationCrop {
+  x: number;
+  y: number;
+  size: number;
 }
 
 interface Rgb {
@@ -354,11 +364,21 @@ export function findOuterCircle(canvas: HTMLCanvasElement): Circle | null {
   };
 }
 
+export function normalisationCrop(circle: Circle): NormalisationCrop {
+  const radius = circle.radius * (canvas / 2) / outerRingRadius;
+
+  return {
+    x: circle.x - radius,
+    y: circle.y - radius,
+    size: radius * 2
+  };
+}
+
 export function normaliseCircle(
   source: HTMLCanvasElement,
   circle: Circle,
   target: HTMLCanvasElement,
-  size = 1024
+  size = canvas
 ): void {
   const context = target.getContext("2d", { willReadFrequently: true });
   if (!context) throw new Error("Could not access the scanner canvas");
@@ -366,14 +386,14 @@ export function normaliseCircle(
   target.width = size;
   target.height = size;
 
-  const sourceSize = circle.radius * 2;
+  const crop = normalisationCrop(circle);
   context.clearRect(0, 0, size, size);
   context.drawImage(
     source,
-    circle.x - circle.radius,
-    circle.y - circle.radius,
-    sourceSize,
-    sourceSize,
+    crop.x,
+    crop.y,
+    crop.size,
+    crop.size,
     0,
     0,
     size,
