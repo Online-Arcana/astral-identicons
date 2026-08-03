@@ -133,8 +133,8 @@ describe("palette seed", () => {
     });
 
     expect(recovered.index).toBe(index);
-    expect(recovered.uncertainStars).toBeGreaterThan(0);
-    expect(recovered.mismatches).toBeGreaterThan(0);
+    expect(recovered.uncertainStars > 0).toBe(true);
+    expect(recovered.mismatches > 0).toBe(true);
   });
 });
 
