@@ -32,6 +32,14 @@ const status = document.querySelector<HTMLParagraphElement>("#status")!;
 const save = document.querySelector<HTMLButtonElement>("#save")!;
 const scan = document.querySelector<HTMLButtonElement>("#scan")!;
 const randomButton = document.querySelector<HTMLButtonElement>("#random")!;
+const previewPanel = preview.closest<HTMLElement>(".preview-panel")!;
+
+previewPanel.style.display = "grid";
+previewPanel.style.justifyItems = "center";
+preview.style.inlineSize = "min(100%, calc(100dvh - 10rem))";
+preview.style.maxInlineSize = "100%";
+preview.style.marginInline = "auto";
+paletteHost.style.inlineSize = "100%";
 
 const assetCache = new Map<string, Promise<string>>();
 

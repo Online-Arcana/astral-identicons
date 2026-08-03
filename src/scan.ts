@@ -1,4 +1,11 @@
-import { captureVideo, findOuterCircle, loadOpenCv, normaliseCircle, type Circle } from "./scan-cv.ts";
+import {
+  captureVideo,
+  findOuterCircle,
+  normaliseCircle,
+  readyOpenCv,
+  warmOpenCv,
+  type Circle
+} from "./scan-cv.ts";
 import {
   findOrientation,
   observePalette,
@@ -195,12 +202,9 @@ export class Scanner {
     }
 
     if (!this.#dialog.open) this.#dialog.showModal();
-    this.message("Loading the image processor…");
+    this.message("Requesting camera access…");
     this.#read.disabled = true;
 
-    await loadOpenCv();
-
-    this.message("Requesting camera access…");
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: false,
       video: {
@@ -214,8 +218,11 @@ export class Scanner {
     this.#video.srcObject = stream;
     await this.#video.play();
 
+    warmOpenCv();
     this.#read.disabled = false;
-    this.message("Keep the complete outer circle inside the guide, then read the frame.");
+    this.message(
+      "Keep the complete outer circle inside the guide. Automatic circle detection is warming in the background."
+    );
   }
 
   private stop(): void {
@@ -230,14 +237,23 @@ export class Scanner {
     this.message("Finding and normalising the identicon…");
 
     try {
-      const cv = await loadOpenCv();
       captureVideo(this.#video, this.#capture);
 
-      const detectedCircle = findOuterCircle(cv, this.#capture);
+      const cv = readyOpenCv();
+      const detectedCircle = cv
+        ? findOuterCircle(cv, this.#capture)
+        : null;
+
       const circle = detectedCircle ?? guideCircle(this.#capture);
 
-      if (!detectedCircle) {
-        this.message("The outer circle was not detected automatically; using the camera guide alignment…");
+      if (!cv) {
+        this.message(
+          "Using the camera guide now; automatic circle detection is still loading in the background…"
+        );
+      } else if (!detectedCircle) {
+        this.message(
+          "The outer circle was not detected automatically; using the camera guide alignment…"
+        );
       }
 
       normaliseCircle(this.#capture, circle, this.#normalised);

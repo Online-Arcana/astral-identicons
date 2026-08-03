@@ -53,7 +53,10 @@ export const opencvSources = [
   "https://docs.opencv.org/4.10.0/opencv.js"
 ] as const;
 
+export const opencvSourceTimeout = 8_000;
+
 let cvRequest: Promise<CvApi> | undefined;
+let cvReady: CvApi | undefined;
 
 function api(value: unknown): value is CvApi {
   if (!value || typeof value !== "object") return false;
@@ -61,14 +64,25 @@ function api(value: unknown): value is CvApi {
 }
 
 async function existingApi(): Promise<CvApi | undefined> {
+  if (cvReady) return cvReady;
+
   const value = window.cv;
   if (!value) return undefined;
 
   const resolved = await Promise.resolve(value);
-  return api(resolved) ? resolved : undefined;
+  if (!api(resolved)) return undefined;
+
+  cvReady = resolved;
+  return cvReady;
 }
 
-function waitForApi(timeout = 30_000): Promise<CvApi> {
+function timeout(milliseconds: number, message: string): Promise<never> {
+  return new Promise((_resolve, reject) => {
+    window.setTimeout(() => reject(new Error(message)), milliseconds);
+  });
+}
+
+function waitForApi(timeoutMilliseconds = opencvSourceTimeout): Promise<CvApi> {
   const started = performance.now();
 
   return new Promise((resolve, reject) => {
@@ -80,7 +94,7 @@ function waitForApi(timeout = 30_000): Promise<CvApi> {
             return;
           }
 
-          if (performance.now() - started >= timeout) {
+          if (performance.now() - started >= timeoutMilliseconds) {
             reject(new Error("OpenCV.js did not finish initialising"));
             return;
           }
@@ -126,8 +140,24 @@ async function loadSource(source: string): Promise<CvApi> {
   document.head.append(script);
 
   try {
-    await loaded;
-    return await waitForApi();
+    await Promise.race([
+      loaded,
+      timeout(
+        opencvSourceTimeout,
+        `Timed out loading OpenCV.js from ${new URL(source).host}`
+      )
+    ]);
+
+    const value = await Promise.race([
+      waitForApi(),
+      timeout(
+        opencvSourceTimeout,
+        `Timed out initialising OpenCV.js from ${new URL(source).host}`
+      )
+    ]);
+
+    cvReady = value;
+    return value;
   } catch (error) {
     script.remove();
     window.cv = undefined;
@@ -164,6 +194,14 @@ export function loadOpenCv(): Promise<CvApi> {
   });
 
   return cvRequest;
+}
+
+export function warmOpenCv(): void {
+  void loadOpenCv().catch(() => undefined);
+}
+
+export function readyOpenCv(): CvApi | undefined {
+  return cvReady;
 }
 
 export function captureVideo(
