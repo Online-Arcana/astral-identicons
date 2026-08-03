@@ -30,11 +30,17 @@ describe("responsive page assets", () => {
   });
 
   test("fails when the expected source contract changes", () => {
-    expect(() => {
+    let message = "";
+
+    try {
       page("<html><head></head><body></body></html>", {
         script: "/app.js",
         stylesheet: "/responsive.css"
       });
-    }).toThrow("locked viewport");
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+
+    expect(message).toContain("locked viewport");
   });
 });
