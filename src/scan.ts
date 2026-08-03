@@ -2,8 +2,6 @@ import {
   captureVideo,
   findOuterCircle,
   normaliseCircle,
-  readyOpenCv,
-  warmOpenCv,
   type Circle
 } from "./scan-cv.ts";
 import {
@@ -218,11 +216,8 @@ export class Scanner {
     this.#video.srcObject = stream;
     await this.#video.play();
 
-    warmOpenCv();
     this.#read.disabled = false;
-    this.message(
-      "Keep the complete outer circle inside the guide. Automatic circle detection is warming in the background."
-    );
+    this.message("Keep the complete outer circle inside the guide, then read the frame.");
   }
 
   private stop(): void {
@@ -239,18 +234,10 @@ export class Scanner {
     try {
       captureVideo(this.#video, this.#capture);
 
-      const cv = readyOpenCv();
-      const detectedCircle = cv
-        ? findOuterCircle(cv, this.#capture)
-        : null;
-
+      const detectedCircle = findOuterCircle(this.#capture);
       const circle = detectedCircle ?? guideCircle(this.#capture);
 
-      if (!cv) {
-        this.message(
-          "Using the camera guide now; automatic circle detection is still loading in the background…"
-        );
-      } else if (!detectedCircle) {
+      if (!detectedCircle) {
         this.message(
           "The outer circle was not detected automatically; using the camera guide alignment…"
         );
