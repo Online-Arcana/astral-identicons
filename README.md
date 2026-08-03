@@ -14,9 +14,9 @@ Each identicon is both a repeatable visual mark and a structured visual record. 
 - **Astrological ring:** twelve equally spaced glyphs sit between two concentric circles. Solar glyphs occupy the cardinal points, Lunar glyphs occupy the alternating points, and the four chart angles fill the remaining positions.
 - **Visual seed:** the three-colour palette redundantly identifies six seed bits. The star field stores a 48-byte Reed-Solomon codeword containing the 32-byte seed and 16 parity bytes.
 
-The upright inner references disambiguate ring glyphs after their radial rotation. The asymmetric registration stars establish an initial angle, while the non-symmetrical upright constellation independently confirms orientation and identifies the Solar sign.
+The upright inner references disambiguate ring glyphs after their radial rotation. The asymmetric registration stars use the constellation colour to establish an initial angle, while the non-symmetrical upright constellation independently confirms orientation and identifies the Solar sign.
 
-The remaining 96 stars are arranged in known cells. Each star's offset within its cell represents one hexadecimal nibble, so two stars represent one codeword byte.
+The remaining 96 stars are arranged in known cells. Each star's offset within its cell represents one hexadecimal nibble, so two stars represent one codeword byte. Visual-code version 2 renders these code stars as small, fixed-size, high-contrast markers in the second foreground colour above the interpretation artwork. That keeps neighbouring nibble positions distinct and prevents the constellation from obscuring the code.
 
 ## Seed model
 
@@ -45,17 +45,17 @@ The decoder can reconstruct up to 16 known erased bytes, such as cells marked un
 
 ## Camera scanner
 
-The public frontend includes an in-page camera scanner. It does not open a separate native camera application.
+The public frontend includes an in-page camera scanner. It does not open a separate native camera application or download an external image-processing runtime.
 
 1. Select **Scan identicon**.
-2. Keep the complete outer circle inside the guide.
+2. Keep the complete outer circle inside the guide, or select **Use photo**.
 3. Hold the image flat and evenly lit.
-4. Select **Read frame**.
+4. Select **Read frame** when using the live camera.
 
 The scanner then:
 
 ```text
-outer-circle detection
+paired outer-circle detection
     → scale and centre normalisation
 
 palette clustering + registration stars
@@ -67,13 +67,13 @@ upright constellation templates
 fixed inner sigils + unrotated ring comparisons
     → six chart signs
 
-96 star-cell samples + Reed-Solomon recovery
+96 high-contrast star samples + Reed-Solomon recovery
     → canonical visual seed
 ```
 
-OpenCV.js 4.10 is loaded from the official OpenCV documentation CDN only when the scanner is opened. The remaining palette, star and template recognition logic is local TypeScript bundled into the static frontend.
+Circle, palette, star and template recognition are implemented in local TypeScript and browser Canvas APIs. Camera and video startup are bounded, and a saved photo remains available when a browser denies or fails to start the camera.
 
-This first camera implementation is designed for clear, mostly front-on captures. Strong perspective distortion, glare, very small marks or heavily obscured stars may require another frame.
+The scanner is designed for clear, mostly front-on captures. Strong perspective distortion, glare, very small marks or heavily obscured stars may require another frame.
 
 ## Scope
 
@@ -179,13 +179,15 @@ public/              responsive web interface
 scripts/             static-site build tools
 src/
   build.ts           shared SVG renderer
+  camera.ts          bounded camera and video startup
   code-layout.ts     shared star and registration geometry
   layout.ts          ring and inner-grid geometry
   palette.ts         64-entry visual palette codebook
   rs.ts              Reed-Solomon encoding and erasure recovery
-  scan.ts            camera scanner orchestration
-  scan-colour.ts     palette, orientation and star decoding
-  scan-cv.ts         OpenCV loading and circle normalisation
+  scan.ts            camera and photo scanner orchestration
+  scan-colour.ts     palette and orientation recovery
+  scan-cv.ts         local paired-ring detection and normalisation
+  scan-seed.ts       high-contrast star decoding
   scan-sign.ts       constellation and glyph classification
   seed.ts            visual seed and star-symbol mapping
   cli.ts             command-line interface
