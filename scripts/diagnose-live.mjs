@@ -10,6 +10,7 @@ for (const [name, engine] of engines) {
   const browser = await engine.launch({ headless: true });
   const page = await browser.newPage({
     viewport: { width: 390, height: 844 },
+    deviceScaleFactor: 3,
     isMobile: true,
     hasTouch: true
   });
@@ -59,14 +60,17 @@ for (const [name, engine] of engines) {
     timeout: 30_000
   });
 
+  const previewElement = page.locator("#preview");
   await page.waitForSelector("#preview > svg", { timeout: 15_000 });
 
-  const preview = await page.locator("#preview").boundingBox();
+  const preview = await previewElement.boundingBox();
   if (!preview) throw new Error(`${name}: preview is not visible`);
 
   if (preview.width > 300 || preview.width > 390) {
     throw new Error(`${name}: preview is too wide at ${preview.width}px`);
   }
+
+  const identicon = await previewElement.screenshot({ type: "png" });
 
   await page.locator("#scan").click();
   await page.waitForFunction(() => {
@@ -76,8 +80,19 @@ for (const [name, engine] of engines) {
 
   await page.waitForFunction(() => {
     const status = document.querySelector("#scan-status")?.textContent ?? "";
-    return status.includes("Keep the complete outer circle inside the guide");
+    return status.includes("Camera ready");
   }, undefined, { timeout: 10_000 });
+
+  await page.locator("#scan-file").setInputFiles({
+    name: "generated-identicon.png",
+    mimeType: "image/png",
+    buffer: identicon
+  });
+
+  await page.waitForFunction(() => {
+    const status = document.querySelector("#scan-status")?.textContent ?? "";
+    return status.startsWith("Seed ");
+  }, undefined, { timeout: 30_000 });
 
   const status = await page.locator("#scan-status").textContent();
   console.log(`${name}: preview=${preview.width}x${preview.height}`);
