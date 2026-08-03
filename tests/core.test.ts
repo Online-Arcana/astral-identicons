@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { buildIdenticon } from "../src/build.ts";
 import { input } from "../src/input.ts";
 import { palette } from "../src/palette.ts";
-import { buildIdenticon } from "../src/build.ts";
 import type { AssetSource } from "../src/types.ts";
 
 const sample = {
@@ -17,7 +17,8 @@ const sample = {
 const simpleAsset = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><path id="shape" fill="#000" stroke="none" d="M0 0h10v10z"/></svg>`;
 const assets: AssetSource = {
   constellation: async () => simpleAsset,
-  sigil: async () => simpleAsset
+  sigil: async () => simpleAsset,
+  star: async () => simpleAsset
 };
 
 describe("palette", () => {
@@ -38,13 +39,19 @@ describe("palette", () => {
 });
 
 describe("builder", () => {
-  test("exports a standalone square SVG without CSS colours", async () => {
-    const svg = await buildIdenticon(input(sample), assets);
-    expect(svg).toContain('viewBox="0 0 1024 1024"');
-    expect(svg).toContain('id="foreground-layer-0"');
-    expect(svg).toContain('id="foreground-layer-1"');
-    expect(svg).not.toContain("currentColor");
-    expect(svg).not.toContain("<style");
-    expect(svg).not.toContain("<image");
+  test("exports a deterministic standalone SVG without CSS colours", async () => {
+    const value = input(sample);
+    const first = await buildIdenticon(value, assets);
+    const second = await buildIdenticon(value, assets);
+
+    expect(first).toBe(second);
+    expect(first).toContain('viewBox="0 0 1024 1024"');
+    expect(first).toContain('id="background-stars"');
+    expect(first).toContain('id="foreground-layer-0"');
+    expect(first).toContain('id="foreground-layer-1-core"');
+    expect(first).toContain('id="ring-system"');
+    expect(first).not.toContain("currentColor");
+    expect(first).not.toContain("<style");
+    expect(first).not.toContain("<image");
   });
 });
