@@ -163,9 +163,14 @@ export class Scanner {
   async open(): Promise<void> {
     if (this.#openRequest) return this.#openRequest;
 
-    this.#openRequest = this.start().finally(() => {
-      this.#openRequest = undefined;
-    });
+    this.#openRequest = this.start()
+      .catch((error) => {
+        this.error(error);
+        throw error;
+      })
+      .finally(() => {
+        this.#openRequest = undefined;
+      });
 
     return this.#openRequest;
   }
@@ -181,20 +186,20 @@ export class Scanner {
     }
 
     if (!this.#dialog.open) this.#dialog.showModal();
-    this.message("Loading the image processor and requesting camera access…");
+    this.message("Loading the image processor…");
     this.#read.disabled = true;
 
-    const [stream] = await Promise.all([
-      navigator.mediaDevices.getUserMedia({
-        audio: false,
-        video: {
-          facingMode: { ideal: "environment" },
-          width: { ideal: 1920 },
-          height: { ideal: 1080 }
-        }
-      }),
-      loadOpenCv()
-    ]);
+    await loadOpenCv();
+
+    this.message("Requesting camera access…");
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: false,
+      video: {
+        facingMode: { ideal: "environment" },
+        width: { ideal: 1920 },
+        height: { ideal: 1080 }
+      }
+    });
 
     this.#stream = stream;
     this.#video.srcObject = stream;
@@ -236,13 +241,14 @@ export class Scanner {
         anchor.angle
       );
 
-      context(this.#normalised).clearRect(
+      const normalisedContext = context(this.#normalised);
+      normalisedContext.clearRect(
         0,
         0,
         this.#normalised.width,
         this.#normalised.height
       );
-      context(this.#normalised).drawImage(oriented.canvas, 0, 0);
+      normalisedContext.drawImage(oriented.canvas, 0, 0);
 
       this.message("Reading the coded stars and correcting uncertain bytes…");
       const seed = readSeed(oriented.data, palette);
@@ -281,6 +287,7 @@ export class Scanner {
   }
 
   private error(error: unknown): void {
+    this.stop();
     this.#status.textContent = error instanceof Error ? error.message : String(error);
     this.#status.className = "scan-status error";
     this.#read.disabled = false;
