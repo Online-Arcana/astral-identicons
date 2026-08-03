@@ -1,37 +1,60 @@
-# Astrological identicon
+# Astral Identicons
 
-Bun TypeScript CLI and responsive web builder for deterministic astrological SVG identicons.
+Deterministic astrological SVG identicons built from a seed and six chart signs.
 
-It composes the supplied zodiac constellation/illustration and sigil assets. It does not generate artwork.
+Each identicon translates a compact astrological profile into a repeatable visual mark. The same inputs and source assets always produce the same standalone SVG.
 
-## Palette
+<p align="center">
+  <img src="./examples/capricorn.svg" alt="Example Capricorn astral identicon" width="420">
+</p>
 
-The seed selects three analogous hues at `H − 60°`, `H`, and `H + 60°`.
+## Visual grammar
 
-1. All three begin as clear colours at 85% saturation and 67% lightness.
-2. The colour with the lowest relative luminance is selected as the background source.
-3. Its hue is nudged to the nearest 15° family, then its saturation and lightness are reduced. It is darkened further when required to keep the background luminance below 0.085.
-4. The lightest remaining colour becomes foreground 0.
-5. The other remaining colour becomes foreground 1.
-6. Every colour is rounded to its nearest reduced `#RGB` value.
+The composition has three layers:
 
-This is analogous colour selection rather than the earlier ternary palette.
+- **Inner interpretation:** the Solar sign selects the large constellation and artistic sign illustration. A faint 3 × 3 sigil grid places the Sun, Moon, Ascendant, Midheaven, Descendant and Imum Coeli inside the inner circle.
+- **Astrological ring:** twelve equally spaced glyphs sit between two concentric circles. Solar glyphs occupy the cardinal points, Lunar glyphs occupy the alternating points, and the four chart angles fill the remaining positions.
+- **Seeded atmosphere:** the seed selects the reduced analogous palette and the deterministic star field contained within the inner circle.
 
-## Run the web builder
+Ring glyphs rotate towards the centre. The Solar illustration is clipped to the inner field, while the faded internal sigils remain subordinate to the constellation artwork.
+
+## Scope
+
+This project is a visual interpreter and SVG compositor. It expects already resolved signs for:
+
+- Sun
+- Moon
+- Ascendant
+- Midheaven
+- Descendant
+- Imum Coeli
+
+It does not calculate a natal chart or generate the source zodiac artwork.
+
+## Web builder
+
+Requires [Bun](https://bun.sh/).
 
 ```sh
+bun install
 bun run start
 ```
 
 Open `http://127.0.0.1:3000`.
 
-The live preview combines the source SVGs in the browser and recolours them with CSS variables. **Save standalone SVG** sends the inputs to the shared TypeScript builder and downloads one final SVG with all vector elements and colours embedded. The saved file has no CSS colour dependency.
+For development with automatic reload:
+
+```sh
+bun run dev
+```
 
 For LAN access:
 
 ```sh
 HOST=0.0.0.0 PORT=3000 bun run start
 ```
+
+The browser preview and downloaded file both use the same `buildIdenticon()` renderer, so the preview is the exported SVG rather than a separate approximation.
 
 ## CLI
 
@@ -47,34 +70,70 @@ bun run identicon -- \
   --out identicon.svg
 ```
 
-Or use a JSON input:
+Without `--out`, the generated SVG is written to standard output.
 
-```sh
-bun run identicon -- --json input.json --out identicon.svg
+JSON input is also supported:
+
+```json
+{
+  "seed": "6270f2-example-seed",
+  "solar": "capricorn",
+  "lunar": "virgo",
+  "ascendant": "capricorn",
+  "midheaven": "libra",
+  "descendant": "cancer",
+  "imumCoeli": "aries"
+}
 ```
 
-Without `--out`, the CLI writes the SVG to stdout.
+```sh
+bun run identicon -- --json input.example.json --out identicon.svg
+```
 
-## Structure
+A different asset root can be supplied with `--assets`.
+
+## Output
+
+Every generated identicon is:
+
+- a standalone 1024 × 1024 SVG;
+- deterministic for the same inputs and assets;
+- composed entirely from vector elements;
+- restricted to three reduced `#RGB` colours;
+- free of raster images and external asset references;
+- labelled with accessible SVG metadata.
+
+The seed controls the visual palette and decorative star field. The six signs control the semantic composition.
+
+## Palette
+
+The seed selects three analogous hues at `H − 60°`, `H`, and `H + 60°`.
+
+The darkest source hue is transformed into a very dark background. The lightest remaining colour becomes foreground 0 for the constellation and stars, while the final colour becomes foreground 1 for the sigils and ring. All three are quantised to reduced `#RGB` values.
+
+## Project structure
 
 ```text
 assets/
-  constellations/   matching constellation and faded sign illustration
-  sigils/           vector zodiac glyphs
+  constellations/   constellation and artistic sign SVGs
+  decor/            decorative vector assets
+  sigils/           zodiac glyph SVGs
+examples/            generated example output
+public/              responsive web interface
 src/
-  build.ts          shared standalone SVG generator
-  cli.ts            command-line entry point
-  server.ts         Bun HTTP server and export endpoint
-  web.ts            browser preview UI
+  build.ts           shared SVG renderer
+  layout.ts          ring and inner-grid geometry
+  palette.ts         deterministic colour selection
+  cli.ts             command-line interface
+  server.ts          Bun web server
+  web.ts             browser controls and preview
+  xml.ts             SVG parsing and rewriting
+tests/                deterministic core tests
 ```
 
-## Invariants
+## Checks
 
-- Square 1024 × 1024 SVG output
-- Case-insensitive canonical zodiac validation
-- Deterministic palette and composition
-- Matching solar illustration and central solar sigil
-- Four lunar sigils in a cross
-- Ascendant, Midheaven, Imum Coeli and Descendant at the corners
-- Exactly three reduced `#RGB` colours
-- No raster images or external asset references in the exported SVG
+```sh
+bun run check
+bun test
+```
