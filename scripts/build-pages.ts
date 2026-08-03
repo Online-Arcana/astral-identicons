@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { cp, mkdir, rm } from "node:fs/promises";
 
 const root = `${import.meta.dir}/..`;
@@ -26,10 +27,19 @@ if (!build.success || !build.outputs[0]) {
  */
 const browserSource = await build.outputs[0].text();
 const browserBundle = browserSource.replaceAll("/assets/", "./assets/");
-await Bun.write(`${outputRoot}/app.js`, browserBundle);
+const bundleHash = createHash("sha256")
+  .update(browserBundle)
+  .digest("hex")
+  .slice(0, 12);
+const bundleName = `app.${bundleHash}.js`;
+
+await Bun.write(`${outputRoot}/${bundleName}`, browserBundle);
 
 const sourceIndex = await Bun.file(`${root}/public/index.html`).text();
-const index = sourceIndex.replace('src="/app.js"', 'src="./app.js"');
+const index = sourceIndex.replace(
+  'src="/app.js"',
+  `src="./${bundleName}"`
+);
 
 if (index === sourceIndex) {
   throw new Error("Could not locate the browser entry point in public/index.html");
