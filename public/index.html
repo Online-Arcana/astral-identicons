@@ -40,10 +40,18 @@
       margin-bottom: 1.5rem;
     }
 
-    h1 {
+    h1,
+    h2 {
       margin: 0;
-      font-size: clamp(1.65rem, 4vw, 2.65rem);
       letter-spacing: -0.04em;
+    }
+
+    h1 {
+      font-size: clamp(1.65rem, 4vw, 2.65rem);
+    }
+
+    h2 {
+      font-size: clamp(1.2rem, 3vw, 1.7rem);
     }
 
     header p {
@@ -112,6 +120,13 @@
       gap: 0 0.8rem;
     }
 
+    .actions,
+    .scan-actions {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 0.55rem;
+    }
+
     button {
       border: 0;
       border-radius: 0.78rem;
@@ -126,10 +141,8 @@
     }
 
     .primary {
-      width: 100%;
       background: #f1f1f7;
       color: #171720;
-      margin-top: 0.35rem;
     }
 
     button:hover {
@@ -202,15 +215,130 @@
       color: #ededf5;
     }
 
-    .status {
+    .status,
+    .scan-status {
       min-height: 1.4em;
-      margin: 0.75rem 0 0;
       color: #aaaabb;
       font-size: 0.88rem;
+      line-height: 1.45;
     }
 
-    .status.error {
+    .status {
+      margin: 0.75rem 0 0;
+    }
+
+    .status.error,
+    .scan-status.error {
       color: #ff9eaa;
+    }
+
+    .scan-status.success {
+      color: #b7f6c7;
+    }
+
+    dialog.scan-dialog {
+      width: min(44rem, calc(100% - 1rem));
+      max-height: calc(100dvh - 1rem);
+      padding: 0;
+      overflow: auto;
+      border: 1px solid #343447;
+      border-radius: 1.2rem;
+      color: #f4f4f7;
+      background: #11111a;
+      box-shadow: 0 2rem 8rem rgba(0, 0, 0, 0.7);
+    }
+
+    dialog.scan-dialog::backdrop {
+      background: rgba(4, 4, 9, 0.78);
+      backdrop-filter: blur(0.4rem);
+    }
+
+    .scan-shell {
+      padding: clamp(0.75rem, 2.5vw, 1.2rem);
+    }
+
+    .scan-copy {
+      margin-bottom: 0.8rem;
+    }
+
+    .scan-copy p {
+      margin: 0.35rem 0 0;
+      color: #aaaabb;
+      line-height: 1.45;
+    }
+
+    .scan-stage {
+      position: relative;
+      width: min(100%, 36rem);
+      aspect-ratio: 1;
+      margin: 0 auto;
+      overflow: hidden;
+      border: 1px solid #343447;
+      border-radius: 1rem;
+      background: #050507;
+    }
+
+    .scan-stage video {
+      display: block;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .scan-guide {
+      position: absolute;
+      inset: 6%;
+      border: 2px solid rgba(255, 255, 255, 0.8);
+      border-radius: 50%;
+      box-shadow:
+        0 0 0 999px rgba(0, 0, 0, 0.28),
+        inset 0 0 0 1px rgba(0, 0, 0, 0.45);
+      pointer-events: none;
+    }
+
+    .scan-guide::before,
+    .scan-guide::after {
+      content: "";
+      position: absolute;
+      background: rgba(255, 255, 255, 0.55);
+    }
+
+    .scan-guide::before {
+      left: 50%;
+      top: -0.45rem;
+      width: 1px;
+      height: 0.9rem;
+    }
+
+    .scan-guide::after {
+      top: 50%;
+      left: -0.45rem;
+      width: 0.9rem;
+      height: 1px;
+    }
+
+    .scan-result {
+      display: grid;
+      grid-template-columns: 5rem 1fr;
+      gap: 0.7rem;
+      align-items: center;
+      margin: 0.8rem 0;
+    }
+
+    #scan-normalised {
+      width: 5rem;
+      height: 5rem;
+      border: 1px solid #353548;
+      border-radius: 50%;
+      background: #08080d;
+    }
+
+    #scan-capture {
+      display: none;
+    }
+
+    .scan-status {
+      margin: 0;
     }
 
     @media (max-width: 820px) {
@@ -228,7 +356,9 @@
         width: min(100% - 1rem, 1180px);
       }
 
-      .grid {
+      .grid,
+      .actions,
+      .scan-actions {
         grid-template-columns: 1fr;
       }
 
@@ -239,6 +369,11 @@
       .swatch-copy {
         padding: 0.45rem;
       }
+
+      dialog.scan-dialog {
+        width: calc(100% - 0.5rem);
+        max-height: calc(100dvh - 0.5rem);
+      }
     }
   </style>
 </head>
@@ -247,8 +382,7 @@
   <main>
     <header>
       <h1>Astrological identicon builder</h1>
-      <p>Compose a deterministic, self-contained SVG from existing zodiac vectors and a seed-derived analogous palette.
-      </p>
+      <p>Compose a deterministic, self-contained SVG from existing zodiac vectors and a recoverable visual seed.</p>
     </header>
 
     <div class="layout">
@@ -263,7 +397,10 @@
           </div>
 
           <div class="grid" id="sign-fields"></div>
-          <button id="save" class="primary" type="submit">Save standalone SVG</button>
+          <div class="actions">
+            <button id="scan" class="secondary" type="button">Scan identicon</button>
+            <button id="save" class="primary" type="submit">Save standalone SVG</button>
+          </div>
           <p id="status" class="status" aria-live="polite"></p>
         </form>
       </section>
@@ -274,6 +411,33 @@
       </section>
     </div>
   </main>
+
+  <dialog id="scan-dialog" class="scan-dialog" aria-labelledby="scan-heading">
+    <section class="scan-shell">
+      <div class="scan-copy">
+        <h2 id="scan-heading">Read an astral identicon</h2>
+        <p>The camera remains inside this page. Hold the complete circular mark flat, evenly lit and inside the guide.</p>
+      </div>
+
+      <div class="scan-stage">
+        <video id="scan-video" autoplay muted playsinline></video>
+        <div class="scan-guide" aria-hidden="true"></div>
+      </div>
+
+      <canvas id="scan-capture" width="720" height="720" aria-hidden="true"></canvas>
+
+      <div class="scan-result">
+        <canvas id="scan-normalised" width="1024" height="1024" aria-label="Normalised scanner frame"></canvas>
+        <p id="scan-status" class="scan-status" aria-live="polite">Camera is not running.</p>
+      </div>
+
+      <div class="scan-actions">
+        <button id="scan-close" class="secondary" type="button">Close</button>
+        <button id="scan-read" class="primary" type="button">Read frame</button>
+      </div>
+    </section>
+  </dialog>
+
   <script type="module" src="/app.js"></script>
 </body>
 

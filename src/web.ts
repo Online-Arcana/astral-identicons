@@ -1,5 +1,6 @@
 import { buildIdenticon } from "./build.ts";
 import { palette } from "./palette.ts";
+import { Scanner } from "./scan.ts";
 import { seedCode } from "./seed.ts";
 import { label, signs, type Sign } from "./sign.ts";
 import type { AssetSource, IdenticonInput } from "./types.ts";
@@ -29,6 +30,7 @@ const preview = document.querySelector<HTMLDivElement>("#preview")!;
 const paletteHost = document.querySelector<HTMLDivElement>("#palette")!;
 const status = document.querySelector<HTMLParagraphElement>("#status")!;
 const save = document.querySelector<HTMLButtonElement>("#save")!;
+const scan = document.querySelector<HTMLButtonElement>("#scan")!;
 const randomButton = document.querySelector<HTMLButtonElement>("#random")!;
 
 const assetCache = new Map<string, Promise<string>>();
@@ -72,6 +74,14 @@ function value(): IdenticonInput {
     descendant: String(data.get("descendant")) as Sign,
     imumCoeli: String(data.get("imumCoeli")) as Sign
   };
+}
+
+function apply(value: IdenticonInput): void {
+  form.querySelector<HTMLInputElement>("#seed")!.value = value.seed;
+
+  for (const [name] of fields) {
+    form.querySelector<HTMLSelectElement>(`#${name}`)!.value = value[name];
+  }
 }
 
 function getAsset(path: string): Promise<string> {
@@ -207,7 +217,23 @@ function schedule(): void {
   }, 90);
 }
 
+const scanner = new Scanner({
+  apply(result) {
+    apply(result);
+
+    void render().then(() => {
+      status.textContent =
+        `Camera decoded ${result.seed} and all six signs with ${result.erasedBytes} corrected or uncertain byte${result.erasedBytes === 1 ? "" : "s"}.`;
+      status.className = "status";
+    }).catch(showError);
+  }
+});
+
 form.addEventListener("input", schedule);
+
+scan.addEventListener("click", () => {
+  void scanner.open().catch(showError);
+});
 
 randomButton.addEventListener("click", () => {
   const bytes = crypto.getRandomValues(new Uint8Array(32));

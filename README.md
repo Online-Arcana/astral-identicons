@@ -2,7 +2,7 @@
 
 Deterministic astrological SVG identicons built from one visual seed and six resolved chart signs.
 
-Each identicon is both a repeatable visual mark and a structured visual record. The constellation and glyph arrangement identify the astrological components. The palette and coded star field preserve the complete visual seed for a later image interpreter.
+Each identicon is both a repeatable visual mark and a structured visual record. The constellation and glyph arrangement identify the astrological components. The palette and coded star field preserve the complete visual seed for camera recovery.
 
 <p align="center">
   <img src="./examples/capricorn.svg" alt="Example Capricorn astral identicon" width="420">
@@ -10,11 +10,13 @@ Each identicon is both a repeatable visual mark and a structured visual record. 
 
 ## Visual grammar
 
-- **Inner interpretation:** the Solar sign selects the large constellation and artistic sign illustration. A faint 3 × 3 sigil grid places the Sun, Moon, Ascendant, Midheaven, Descendant and Imum Coeli inside the inner circle.
+- **Inner interpretation:** the Solar sign selects the large upright constellation and artistic sign illustration. A fixed 3 × 3 grid places upright references for the Sun, Moon, Ascendant, Midheaven, Descendant and Imum Coeli.
 - **Astrological ring:** twelve equally spaced glyphs sit between two concentric circles. Solar glyphs occupy the cardinal points, Lunar glyphs occupy the alternating points, and the four chart angles fill the remaining positions.
 - **Visual seed:** the three-colour palette redundantly identifies six seed bits. The star field stores a 48-byte Reed-Solomon codeword containing the 32-byte seed and 16 parity bytes.
 
-Three fixed registration stars provide orientation. The remaining 96 stars are arranged in known cells. Each star's offset within its cell represents one hexadecimal nibble, so two stars represent one codeword byte.
+The upright inner references disambiguate ring glyphs after their radial rotation. The asymmetric registration stars establish an initial angle, while the non-symmetrical upright constellation independently confirms orientation and identifies the Solar sign.
+
+The remaining 96 stars are arranged in known cells. Each star's offset within its cell represents one hexadecimal nibble, so two stars represent one codeword byte.
 
 ## Seed model
 
@@ -26,7 +28,7 @@ The recoverable visual seed is a 256-bit value written as 64 hexadecimal digits:
 
 A 64-digit hexadecimal input is preserved exactly. Other non-empty strings remain accepted and are deterministically reduced to a 256-bit visual seed. The web builder generates canonical 256-bit seeds by default.
 
-A recogniser can therefore recover the canonical visual seed, not arbitrary source text that was reduced into one.
+A recogniser recovers the canonical visual seed, not arbitrary source text that was reduced into one.
 
 ```text
 recognised palette
@@ -39,13 +41,43 @@ Reed-Solomon recovery and palette verification
     → complete 256-bit visual seed
 ```
 
-The current decoder can recover up to 16 known erased bytes, such as cells the image recogniser marks as obscured or uncertain. A later camera interpreter can add unknown-error correction and image classification without changing the SVG format.
+The decoder can reconstruct up to 16 known erased bytes, such as cells marked uncertain or obscured by the image processor.
 
-The six chart signs are read independently from the constellation and glyph arrangement.
+## Camera scanner
+
+The public frontend includes an in-page camera scanner. It does not open a separate native camera application.
+
+1. Select **Scan identicon**.
+2. Keep the complete outer circle inside the guide.
+3. Hold the image flat and evenly lit.
+4. Select **Read frame**.
+
+The scanner then:
+
+```text
+outer-circle detection
+    → scale and centre normalisation
+
+palette clustering + registration stars
+    → palette index and initial angle
+
+upright constellation templates
+    → orientation confirmation and Solar sign
+
+fixed inner sigils + unrotated ring comparisons
+    → six chart signs
+
+96 star-cell samples + Reed-Solomon recovery
+    → canonical visual seed
+```
+
+OpenCV.js 4.10 is loaded from the official OpenCV documentation CDN only when the scanner is opened. The remaining palette, star and template recognition logic is local TypeScript bundled into the static frontend.
+
+This first camera implementation is designed for clear, mostly front-on captures. Strong perspective distortion, glare, very small marks or heavily obscured stars may require another frame.
 
 ## Scope
 
-This project is a visual interpreter and SVG compositor. It expects already resolved signs for:
+This project is a visual interpreter, SVG compositor and browser-side identicon reader. It expects already resolved signs for:
 
 - Sun
 - Moon
@@ -54,7 +86,7 @@ This project is a visual interpreter and SVG compositor. It expects already reso
 - Descendant
 - Imum Coeli
 
-It does not calculate a natal chart, generate the source zodiac artwork, or currently perform camera recognition.
+It does not calculate a natal chart or generate the source zodiac artwork.
 
 ## Web builder
 
@@ -82,12 +114,11 @@ The browser preview and downloaded file use the same `buildIdenticon()` renderer
 
 ## GitHub Pages
 
-The public generator is deployed as a static site. Visitors do not need Bun or a server-side API.
+The public generator and scanner are deployed as a static site. Visitors do not need Bun or a server-side API.
 
-1. Make the repository public.
-2. Open **Settings → Pages**.
-3. Set **Source** to **GitHub Actions**.
-4. Run the **GitHub Pages** workflow or push to `main`.
+1. Open **Settings → Pages**.
+2. Set **Source** to **GitHub Actions**.
+3. Run the **GitHub Pages** workflow or push to `main`.
 
 ```text
 https://kitty-crow.github.io/astral-identicons/
@@ -148,9 +179,14 @@ public/              responsive web interface
 scripts/             static-site build tools
 src/
   build.ts           shared SVG renderer
+  code-layout.ts     shared star and registration geometry
   layout.ts          ring and inner-grid geometry
   palette.ts         64-entry visual palette codebook
   rs.ts              Reed-Solomon encoding and erasure recovery
+  scan.ts            camera scanner orchestration
+  scan-colour.ts     palette, orientation and star decoding
+  scan-cv.ts         OpenCV loading and circle normalisation
+  scan-sign.ts       constellation and glyph classification
   seed.ts            visual seed and star-symbol mapping
   cli.ts             command-line interface
   server.ts          Bun web server
