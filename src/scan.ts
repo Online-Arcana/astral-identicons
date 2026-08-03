@@ -53,6 +53,7 @@ interface EvaluatedFrame {
   constellation: SignResult;
   palette: ObservedPalette;
   seed: SeedReading | undefined;
+  signs: SignReading | undefined;
   score: number;
 }
 
@@ -161,10 +162,34 @@ function captureImage(
   );
 }
 
+const signRoles = [
+  "solar",
+  "lunar",
+  "ascendant",
+  "midheaven",
+  "descendant",
+  "imumCoeli"
+] as const;
+
+function signEvidence(signs: SignReading, value: IdenticonInput): number {
+  let score = 0;
+
+  for (const role of signRoles) {
+    const observation = signs[role];
+    const confidence = Math.min(0.4, observation.confidence * 8);
+    score += observation.sign === value[role]
+      ? 0.35 + confidence
+      : -confidence;
+  }
+
+  return score;
+}
+
 function frameScore(
   constellation: SignResult,
   palette: ObservedPalette,
-  seed: SeedReading | undefined
+  seed: SeedReading | undefined,
+  signs: SignReading | undefined
 ): number {
   if (!seed) return constellation.score;
 
@@ -179,6 +204,7 @@ function frameScore(
     score += Math.max(0, palette.confidence);
   }
 
+  if (signs) score += signEvidence(signs, seed.value);
   return score;
 }
 
@@ -191,11 +217,14 @@ async function evaluateFrame(
   const data = imageData(canvas);
   const constellation = await classifyConstellation(data, palette);
   let seed: SeedReading | undefined;
+  let signs: SignReading | undefined;
 
   try {
     seed = readSeed(data, palette);
+    signs = await classifySigns(data, palette, constellation);
   } catch {
     seed = undefined;
+    signs = undefined;
   }
 
   return {
@@ -205,7 +234,8 @@ async function evaluateFrame(
     constellation,
     palette,
     seed,
-    score: frameScore(constellation, palette, seed)
+    signs,
+    score: frameScore(constellation, palette, seed, signs)
   };
 }
 
@@ -283,16 +313,7 @@ function visualSignMismatches(
   signs: SignReading,
   value: IdenticonInput
 ): number {
-  const roles = [
-    "solar",
-    "lunar",
-    "ascendant",
-    "midheaven",
-    "descendant",
-    "imumCoeli"
-  ] as const;
-
-  return roles.filter((role) => signs[role].sign !== value[role]).length;
+  return signRoles.filter((role) => signs[role].sign !== value[role]).length;
 }
 
 function softFailure(error: unknown): string {
@@ -536,7 +557,7 @@ export class Scanner {
     );
     normalisedContext.drawImage(oriented.canvas, 0, 0);
 
-    const signs = await classifySigns(
+    const signs = oriented.signs ?? await classifySigns(
       oriented.data,
       oriented.palette,
       oriented.constellation
