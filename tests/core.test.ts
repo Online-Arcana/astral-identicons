@@ -3,36 +3,34 @@ import { buildIdenticon } from "../src/build.ts";
 import {
   codeAnchorPoint,
   codeAnchors,
+  codeBitSeparation,
   codeSectorCount,
   codeSlotPoint,
   codeSymbolPoint,
-  codeSymbolSpacing,
   codeTrackCount,
   innerClipRadius
 } from "../src/code-layout.ts";
 import { input } from "../src/input.ts";
-import { centre } from "../src/layout.ts";
+import { centre, ringPlacements } from "../src/layout.ts";
 import {
   palette,
   paletteForIndex,
   paletteIndexFromReduced
 } from "../src/palette.ts";
 import { matchPalette, type Rgb } from "../src/scan-colour.ts";
-import { recoverSeedObservations } from "../src/scan-seed.ts";
+import { recoverPaletteCorrection } from "../src/scan-seed.ts";
 import {
-  decodeSeedNibbles,
-  encodedSeedNibbles,
+  canonicalPaletteSeed,
+  paletteCorrectionBits,
+  paletteCount,
   seedCode,
-  seedCodewordByteCount,
-  seedNibbleSlot,
   seedPaletteIndex,
-  seedParityByteCount,
   seedSlotCount
 } from "../src/seed.ts";
 import type { AssetSource } from "../src/types.ts";
 
 const sample = {
-  seed: "same-seed",
+  seed: "6270f2-example",
   solar: "capricorn",
   lunar: "virgo",
   ascendant: "capricorn",
@@ -58,17 +56,31 @@ function rgb(value: string): Rgb {
   };
 }
 
-describe("visual seed", () => {
-  test("normalises input to a recoverable 256-bit code", () => {
+function hamming(left: readonly number[], right: readonly number[]): number {
+  let distance = 0;
+
+  for (let index = 0; index < left.length; index += 1) {
+    if (left[index] !== right[index]) distance += 1;
+  }
+
+  return distance;
+}
+
+describe("palette seed", () => {
+  test("normalises arbitrary input while preserving explicit palette seeds", () => {
     const exact = "0123456789ABCDEF".repeat(4);
     expect(seedCode("same-seed")).toMatch(/^[0-9A-F]{64}$/);
     expect(seedCode(exact.toLowerCase())).toBe(exact);
+
+    for (let index = 0; index < paletteCount; index += 1) {
+      expect(seedPaletteIndex(canonicalPaletteSeed(index))).toBe(index);
+    }
   });
 
-  test("uses 64 unique palettes as six redundant seed bits", () => {
+  test("uses 64 unique reduced palettes", () => {
     const keys = new Set<string>();
 
-    for (let index = 0; index < 64; index += 1) {
+    for (let index = 0; index < paletteCount; index += 1) {
       const value = paletteForIndex(index);
       keys.add([
         value.background.reduced,
@@ -77,52 +89,52 @@ describe("visual seed", () => {
       ].join("|"));
     }
 
-    expect(keys.size).toBe(64);
+    expect(keys.size).toBe(paletteCount);
   });
 
-  test("recovers thirty-two erased Reed-Solomon bytes", () => {
-    const valuePalette = palette(sample.seed);
-    const paletteIndex = paletteIndexFromReduced(
-      valuePalette.background.reduced,
-      valuePalette.layer0.reduced,
-      valuePalette.layer1.reduced
+  test("keeps palette correction codewords far apart", () => {
+    const codewords = Array.from(
+      { length: paletteCount },
+      (_unused, index) => paletteCorrectionBits(index)
     );
+    let minimum = Number.POSITIVE_INFINITY;
 
-    const slots: Array<number | null> = [...encodedSeedNibbles(sample.seed)];
-
-    for (let index = 0; index < seedParityByteCount; index += 1) {
-      const byte = (index * 7) % seedCodewordByteCount;
-      slots[seedNibbleSlot(byte * 2)] = null;
-      slots[seedNibbleSlot(byte * 2 + 1)] = null;
+    for (let left = 0; left < codewords.length; left += 1) {
+      for (let right = left + 1; right < codewords.length; right += 1) {
+        minimum = Math.min(
+          minimum,
+          hamming(codewords[left]!, codewords[right]!)
+        );
+      }
     }
 
-    expect(paletteIndex).toBe(seedPaletteIndex(sample.seed));
-    expect(decodeSeedNibbles(slots, paletteIndex)).toBe(seedCode(sample.seed));
+    expect(minimum).toBe(64);
   });
 
-  test("turns low-confidence conflicting camera bytes into erasures", () => {
-    const observations = encodedSeedNibbles(sample.seed).map((value) => ({
-      value,
-      confidence: 1
+  test("correction stars override a wrong camera colour guess", () => {
+    const index = 37;
+    const observations = paletteCorrectionBits(index).map((value, slot) => ({
+      value: slot % 17 === 0 ? null : value,
+      confidence: slot % 11 === 0 ? 0.15 : 0.95
     }));
 
-    const conflicting = [3, 7, 11, 15, 19, 23, 27, 31, 36, 41, 48, 57];
-
-    for (const byte of conflicting) {
-      const slot = seedNibbleSlot(byte * 2);
+    for (let slot = 3; slot < observations.length; slot += 19) {
+      const current = observations[slot]!;
+      if (current.value === null) continue;
       observations[slot] = {
-        value: (observations[slot]!.value + 5) % 16,
-        confidence: 0.001
+        value: current.value === 0 ? 1 : 0,
+        confidence: 0.12
       };
     }
 
-    const recovered = recoverSeedObservations(
-      observations,
-      seedPaletteIndex(sample.seed)
-    );
+    const recovered = recoverPaletteCorrection(observations, {
+      index: 12,
+      confidence: 1
+    });
 
-    expect(recovered.seed).toBe(seedCode(sample.seed));
-    expect(recovered.erasures).toBe(conflicting.length);
+    expect(recovered.index).toBe(index);
+    expect(recovered.uncertainStars).toBeGreaterThan(0);
+    expect(recovered.mismatches).toBeGreaterThan(0);
   });
 });
 
@@ -141,35 +153,22 @@ describe("visual scanner geometry", () => {
     expect(points.size).toBe(seedSlotCount);
   });
 
-  test("maps all sixteen symbols to camera-separated offsets", () => {
-    const points = Array.from({ length: 16 }, (_unused, value) => {
-      return codeSymbolPoint(0, value);
-    });
-    const keys = new Set(points.map((point) => `${point.x}:${point.y}`));
-    let minimum = Number.POSITIVE_INFINITY;
+  test("uses two clearly separated radial positions per correction bit", () => {
+    for (let slot = 0; slot < seedSlotCount; slot += 1) {
+      const zero = codeSymbolPoint(slot, 0);
+      const one = codeSymbolPoint(slot, 1);
+      const separation = Math.hypot(zero.x - one.x, zero.y - one.y);
 
-    for (let left = 0; left < points.length; left += 1) {
-      for (let right = left + 1; right < points.length; right += 1) {
-        minimum = Math.min(
-          minimum,
-          Math.hypot(
-            points[left]!.x - points[right]!.x,
-            points[left]!.y - points[right]!.y
-          )
-        );
-      }
+      expect(Math.abs(separation - codeBitSeparation) < 0.000001).toBe(true);
     }
-
-    expect(keys.size).toBe(16);
-    expect(Math.abs(minimum - codeSymbolSpacing) < 0.000001).toBe(true);
   });
 
-  test("keeps every code position inside the inner clipping circle", () => {
+  test("keeps every correction position inside the inner clipping circle", () => {
     for (let slot = 0; slot < seedSlotCount; slot += 1) {
-      for (let value = 0; value < 16; value += 1) {
-        const point = codeSymbolPoint(slot, value);
+      for (const bit of [0, 1] as const) {
+        const point = codeSymbolPoint(slot, bit);
         const radius = Math.hypot(point.x - centre, point.y - centre);
-        expect(radius < innerClipRadius - 7).toBe(true);
+        expect(radius < innerClipRadius - 8).toBe(true);
       }
     }
   });
@@ -183,7 +182,19 @@ describe("visual scanner geometry", () => {
     expect(keys.size).toBe(3);
   });
 
-  test("recovers an exact palette codebook entry", () => {
+  test("places Imum Coeli left and Descendant right on the ring", () => {
+    const value = input(sample);
+    const ring = ringPlacements(value);
+    const descendant = ring.find((placement) => placement.role === "Descendant")!;
+    const imumCoeli = ring.find((placement) => placement.role === "Imum Coeli")!;
+
+    expect(descendant.angle).toBe(150);
+    expect(descendant.x > centre).toBe(true);
+    expect(imumCoeli.angle).toBe(210);
+    expect(imumCoeli.x < centre).toBe(true);
+  });
+
+  test("recovers an exact palette codebook entry from perfect colours", () => {
     const index = 37;
     const value = paletteForIndex(index);
     const match = matchPalette(
@@ -215,26 +226,28 @@ describe("palette", () => {
 });
 
 describe("builder", () => {
-  test("exports a deterministic standalone SVG with a recoverable seed", async () => {
+  test("exports a deterministic standalone SVG with palette error correction", async () => {
     const value = input(sample);
     const first = await buildIdenticon(value, assets);
     const second = await buildIdenticon(value, assets);
 
     expect(first).toBe(second);
     expect(first).toContain('viewBox="0 0 1024 1024"');
-    expect(first).toContain(`data-seed-code="${seedCode(sample.seed)}"`);
-    expect(first).toContain('data-code-version="3"');
-    expect(first).toContain('data-code="reed-solomon-64-32-v3"');
+    expect(first).toContain(`data-palette-index="${seedPaletteIndex(sample.seed)}"`);
+    expect(first).toContain('data-code-version="4"');
+    expect(first).toContain('data-code="hadamard-32x4-palette-v4"');
+    expect(first).toContain('data-code-role="palette-error-correction"');
     expect(first).toContain('data-code-slots="128"');
     expect(first).toContain('data-code-tracks="4"');
     expect(first).toContain('data-code-sectors="32"');
-    expect(first).toContain('data-code-parity="true"');
+    expect(first).toContain('data-code-bit="0"');
+    expect(first).toContain('data-code-bit="1"');
     expect(first).toContain('id="registration-stars"');
     expect(first).toContain('id="coded-stars"');
     expect(first).toContain('data-code-colour="layer1"');
-    expect(first).toContain('data-code-symbol-size="10"');
-    expect(first).toContain('data-code-symbol-spacing="10"');
-    expect(first).toContain('data-code-halo-radius="7"');
+    expect(first).toContain('data-code-symbol-size="12"');
+    expect(first).toContain('data-code-symbol-separation="24"');
+    expect(first).toContain('data-code-halo-radius="8"');
     expect(first).toContain('opacity="1"');
     expect(first).toContain('id="foreground-layer-0"');
     expect(first).toContain('id="foreground-layer-1-core"');
