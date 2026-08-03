@@ -1,16 +1,10 @@
 import {
   codeAnchorPoint,
   codeAnchors,
-  codeSymbolPoint,
   rotatePoint
 } from "./code-layout.ts";
 import { centre } from "./layout.ts";
 import { paletteForIndex } from "./palette.ts";
-import {
-  decodeSeedNibbles,
-  seedNibbleSlot,
-  seedSlotCount
-} from "./seed.ts";
 
 export interface Rgb {
   r: number;
@@ -24,13 +18,6 @@ export interface ObservedPalette {
   layer1: Rgb;
   index: number;
   confidence: number;
-}
-
-export interface SeedReading {
-  seed: string;
-  erasures: number;
-  confidence: number;
-  nibbles: readonly (number | null)[];
 }
 
 interface Cluster {
@@ -346,6 +333,7 @@ function strongestEvidence(
   for (let offsetY = -radius; offsetY <= radius; offsetY += 1) {
     for (let offsetX = -radius; offsetX <= radius; offsetX += 1) {
       if (offsetX * offsetX + offsetY * offsetY > radius * radius) continue;
+
       values.push(colourEvidence(
         pixel(image, x + offsetX, y + offsetY),
         background,
@@ -355,9 +343,11 @@ function strongestEvidence(
   }
 
   values.sort((left, right) => right - left);
-  return values.slice(0, Math.max(3, Math.round(values.length * 0.18)))
-    .reduce((sum, value) => sum + value, 0) /
-    Math.max(1, Math.round(values.length * 0.18));
+  const count = Math.max(3, Math.round(values.length * 0.18));
+  const selected = values.slice(0, count);
+
+  return selected.reduce((sum, value) => sum + value, 0) /
+    Math.max(1, selected.length);
 }
 
 function anchorScore(
@@ -420,73 +410,11 @@ export function findOrientation(
 
   return {
     angle: refinedAngle,
-    confidence: clamp((refinedScore - secondScore) / Math.max(0.01, refinedScore), 0, 1)
-  };
-}
-
-function symbolScore(
-  image: ImageData,
-  slot: number,
-  value: number,
-  palette: ObservedPalette
-): number {
-  const point = codeSymbolPoint(slot, value);
-  const scale = image.width / 1024;
-
-  return strongestEvidence(
-    image,
-    point.x * scale,
-    point.y * scale,
-    Math.max(2, Math.round(4 * scale)),
-    palette.background,
-    palette.layer0
-  );
-}
-
-export function readSeed(
-  image: ImageData,
-  palette: ObservedPalette
-): SeedReading {
-  const slots: Array<number | null> = Array(seedSlotCount).fill(null);
-  let confidenceTotal = 0;
-  let confident = 0;
-
-  for (let slot = 0; slot < seedSlotCount; slot += 1) {
-    const scores = Array.from({ length: 16 }, (_unused, value) => ({
-      value,
-      score: symbolScore(image, slot, value, palette)
-    })).sort((left, right) => right.score - left.score);
-
-    const best = scores[0]!;
-    const second = scores[1]!;
-    const margin = best.score - second.score;
-
-    if (best.score < 0.075 || margin < 0.012) continue;
-
-    slots[slot] = best.value;
-    confidenceTotal += clamp(margin / Math.max(0.01, best.score), 0, 1);
-    confident += 1;
-  }
-
-  const byteErasures = new Set<number>();
-
-  for (let byte = 0; byte < seedSlotCount / 2; byte += 1) {
-    const high = slots[seedNibbleSlot(byte * 2)];
-    const low = slots[seedNibbleSlot(byte * 2 + 1)];
-    if (high === null || low === null) byteErasures.add(byte);
-  }
-
-  if (byteErasures.size > 16) {
-    throw new Error(
-      `Too many uncertain star bytes (${byteErasures.size}); hold the identicon flatter and closer`
-    );
-  }
-
-  return {
-    seed: decodeSeedNibbles(slots, palette.index),
-    erasures: byteErasures.size,
-    confidence: confident === 0 ? 0 : confidenceTotal / confident,
-    nibbles: slots
+    confidence: clamp(
+      (refinedScore - secondScore) / Math.max(0.01, refinedScore),
+      0,
+      1
+    )
   };
 }
 
