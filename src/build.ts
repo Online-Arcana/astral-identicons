@@ -1,7 +1,12 @@
 import {
+  codeAnchorPoint,
+  codeAnchors,
+  codeSymbolPoint,
+  innerClipRadius
+} from "./code-layout.ts";
+import {
   canvas,
   centre,
-  innerRingRadius,
   outerRingRadius,
   placements,
   ringPlacements,
@@ -19,15 +24,11 @@ import { label, type Sign } from "./sign.ts";
 import type { AssetSource, IdenticonInput } from "./types.ts";
 import { escapeXml, monochrome, outlined, parseSvg, scopeIds } from "./xml.ts";
 
-const innerGap = 8;
-const innerClipRadius = innerRingRadius - ringStroke / 2 - innerGap;
 const layer0Inset = 12;
 const layer0Radius = innerClipRadius - layer0Inset;
 const layer0Size = layer0Radius * 2;
 const layer0X = centre - layer0Radius;
 const layer0Y = centre - layer0Radius;
-const starCodeRadius = innerClipRadius - 54;
-const goldenAngle = Math.PI * (3 - Math.sqrt(5));
 const coreReferenceOpacity = 0.12;
 
 function nestedSvg(
@@ -66,29 +67,6 @@ function placedSvg(
   return `<g transform="rotate(${rotation} ${cx} ${cy})">${svg}</g>`;
 }
 
-function slotPoint(slot: number): { x: number; y: number } {
-  const fraction = (slot + 0.5) / seedSlotCount;
-  const radius = 42 + Math.sqrt(fraction) * (starCodeRadius - 42);
-  const angle = slot * goldenAngle - Math.PI / 2;
-
-  return {
-    x: centre + Math.cos(angle) * radius,
-    y: centre + Math.sin(angle) * radius
-  };
-}
-
-function symbolPoint(slot: number, value: number): { x: number; y: number } {
-  const base = slotPoint(slot);
-  const column = value >>> 2;
-  const row = value & 0x03;
-  const spacing = 8;
-
-  return {
-    x: base.x + (column - 1.5) * spacing,
-    y: base.y + (row - 1.5) * spacing
-  };
-}
-
 function starBody(
   asset: ReturnType<typeof parseSvg>,
   colour: string,
@@ -101,17 +79,9 @@ function registrationStars(
   asset: ReturnType<typeof parseSvg>,
   colour: string
 ): string {
-  const anchors = [
-    { angle: -90, radius: 358, size: 28 },
-    { angle: 134, radius: 354, size: 20 },
-    { angle: 246, radius: 350, size: 14 }
-  ] as const;
-
-  return anchors
+  return codeAnchors
     .map((anchor, index) => {
-      const radians = (anchor.angle * Math.PI) / 180;
-      const x = centre + Math.cos(radians) * anchor.radius;
-      const y = centre + Math.sin(radians) * anchor.radius;
+      const { x, y } = codeAnchorPoint(anchor);
       const body = starBody(asset, colour, `registration-${index}`);
 
       return `<g data-code-anchor="${index}" opacity="0.34">${placedSvg(
@@ -135,7 +105,7 @@ function stars(
   const result: string[] = [registrationStars(asset, colour)];
 
   for (const symbol of seedSymbols(seed)) {
-    const { x, y } = symbolPoint(symbol.slot, symbol.value);
+    const { x, y } = codeSymbolPoint(symbol.slot, symbol.value);
     const style = hash32(`astrological-identicon/star-slot/v2:${symbol.slot}`);
     const size = 6 + (style % 10);
     const opacity = 0.18 + ((style >>> 8) % 9) / 100;
