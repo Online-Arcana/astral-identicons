@@ -1,0 +1,70 @@
+name: Diagnose live scanner
+
+on:
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Inspect deployed HTML and JavaScript
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          base='https://kitty-crow.github.io/astral-identicons/'
+          nonce="$(date +%s)"
+
+          curl --fail --silent --show-error --location \
+            --dump-header headers.txt \
+            --output index.html \
+            "${base}?diagnostic=${nonce}"
+
+          echo '--- response headers ---'
+          cat headers.txt
+          echo '--- script references ---'
+          grep -oE 'src="[^"]+\.js"' index.html || true
+
+          script="$(grep -oE 'src="[^"]+\.js"' index.html | head -n1 | cut -d'"' -f2)"
+          test -n "${script}"
+
+          if [[ "${script}" == ./* ]]; then
+            script_url="${base}${script#./}"
+          elif [[ "${script}" == /* ]]; then
+            script_url="https://kitty-crow.github.io${script}"
+          else
+            script_url="${script}"
+          fi
+
+          curl --fail --silent --show-error --location \
+            --output app.js \
+            "${script_url}?diagnostic=${nonce}"
+
+          echo "deployed-script=${script_url}"
+          echo "deployed-script-bytes=$(wc -c < app.js)"
+          echo "deployed-script-sha256=$(sha256sum app.js | cut -d' ' -f1)"
+
+          echo '--- deployed implementation markers ---'
+          for marker in \
+            'Loading the image processor' \
+            'Automatic circle detection is warming' \
+            '@techstark/opencv-js' \
+            'cdn.jsdelivr.net/npm/@techstark/opencv-js' \
+            'Keep the complete outer circle inside the guide, then read the frame'; do
+            if grep -Fq "${marker}" app.js; then
+              echo "present: ${marker}"
+            else
+              echo "absent: ${marker}"
+            fi
+          done
+
+          if grep -Eq 'Loading the image processor|Automatic circle detection is warming|@techstark/opencv-js|cdn\.jsdelivr\.net/npm/@techstark/opencv-js' app.js; then
+            echo 'The live site is still serving the old OpenCV-based scanner.' >&2
+            exit 1
+          fi
