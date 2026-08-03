@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { cp, mkdir, rm } from "node:fs/promises";
+import { page } from "../src/page.ts";
 
 const root = `${import.meta.dir}/..`;
 const outputRoot = `${root}/dist`;
@@ -36,16 +37,13 @@ const bundleName = `app.${bundleHash}.js`;
 await Bun.write(`${outputRoot}/${bundleName}`, browserBundle);
 
 const sourceIndex = await Bun.file(`${root}/public/index.html`).text();
-const index = sourceIndex.replace(
-  'src="/app.js"',
-  `src="./${bundleName}"`
-);
-
-if (index === sourceIndex) {
-  throw new Error("Could not locate the browser entry point in public/index.html");
-}
+const index = page(sourceIndex, {
+  script: `./${bundleName}`,
+  stylesheet: "./responsive.css"
+});
 
 await Bun.write(`${outputRoot}/index.html`, index);
+await cp(`${root}/public/responsive.css`, `${outputRoot}/responsive.css`);
 await cp(`${root}/assets`, `${outputRoot}/assets`, { recursive: true });
 await Bun.write(`${outputRoot}/.nojekyll`, "");
 
