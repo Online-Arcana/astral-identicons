@@ -292,7 +292,8 @@ function bestPayload(
 
 export class Scanner {
   readonly #dialog = required<HTMLDialogElement>("#scan-dialog");
-  readonly #stage = required<HTMLElement>("#scan-stage");
+  readonly #stage = required<HTMLElement>(".scan-stage");
+  readonly #guide = required<HTMLElement>(".scan-guide");
   readonly #video = required<HTMLVideoElement>("#scan-video");
   readonly #capture = required<HTMLCanvasElement>("#scan-capture");
   readonly #normalised = required<HTMLCanvasElement>("#scan-normalised");
@@ -300,6 +301,7 @@ export class Scanner {
   readonly #upload = required<HTMLButtonElement>("#scan-upload");
   readonly #file = required<HTMLInputElement>("#scan-file");
   readonly #close = required<HTMLButtonElement>("#scan-close");
+  readonly #frozen: HTMLCanvasElement;
   readonly #options: ScannerOptions;
 
   #stream: MediaStream | undefined;
@@ -310,6 +312,26 @@ export class Scanner {
 
   constructor(options: ScannerOptions) {
     this.#options = options;
+    this.#frozen = document.createElement("canvas");
+    this.#frozen.width = 1024;
+    this.#frozen.height = 1024;
+    this.#frozen.setAttribute("aria-label", "Captured identicon frame");
+    Object.assign(this.#frozen.style, {
+      position: "absolute",
+      inset: "0",
+      inlineSize: "100%",
+      blockSize: "100%",
+      maxInlineSize: "100%",
+      display: "none",
+      background: "#050507"
+    });
+    this.#stage.append(this.#frozen);
+
+    const copy = document.querySelector<HTMLElement>(".scan-copy p");
+    if (copy) {
+      copy.textContent =
+        "The scanner captures as soon as the complete identicon is framed, then reconstructs from the frozen image. You do not need to keep holding it still.";
+    }
 
     this.#close.addEventListener("click", () => this.close());
     this.#upload.addEventListener("click", () => this.#file.click());
@@ -406,12 +428,16 @@ export class Scanner {
   private stop(): void {
     this.stopCamera();
     this.#decoding = false;
-    this.#stage.classList.remove("captured");
+    this.resetViewport();
     this.#upload.disabled = false;
   }
 
   private resetViewport(): void {
     this.#stage.classList.remove("captured");
+    this.#video.style.display = "";
+    this.#guide.style.display = "";
+    this.#frozen.style.display = "none";
+
     const normalisedContext = context(this.#normalised);
     normalisedContext.clearRect(
       0,
@@ -419,12 +445,25 @@ export class Scanner {
       this.#normalised.width,
       this.#normalised.height
     );
+    context(this.#frozen).clearRect(0, 0, this.#frozen.width, this.#frozen.height);
+  }
+
+  private showFrozen(source: HTMLCanvasElement): void {
+    this.#frozen.width = source.width;
+    this.#frozen.height = source.height;
+    const frozenContext = context(this.#frozen);
+    frozenContext.clearRect(0, 0, this.#frozen.width, this.#frozen.height);
+    frozenContext.drawImage(source, 0, 0);
+    this.#video.style.display = "none";
+    this.#guide.style.display = "none";
+    this.#frozen.style.display = "block";
   }
 
   private freezeViewport(circle: Circle): void {
     normaliseCircle(this.#capture, circle, this.#normalised);
     this.stopCamera();
     this.#stage.classList.add("captured");
+    this.showFrozen(this.#normalised);
   }
 
   private scheduleAutomatic(delay = automaticInterval): void {
@@ -509,6 +548,7 @@ export class Scanner {
       this.#normalised.height
     );
     normalisedContext.drawImage(candidate.canvas, 0, 0);
+    this.showFrozen(this.#normalised);
 
     return {
       ...value,
