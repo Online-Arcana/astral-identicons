@@ -2,6 +2,9 @@ import {
   codeAnchorPoint,
   codeAnchors,
   codeSymbolPoint,
+  codeSymbolSpacing,
+  codeTrackCount,
+  codeSectorCount,
   innerClipRadius
 } from "./code-layout.ts";
 import {
@@ -17,7 +20,9 @@ import { palette } from "./palette.ts";
 import {
   hash32,
   seedCode,
+  seedCodewordByteCount,
   seedPaletteIndex,
+  seedParityByteCount,
   seedSymbols,
   seedSlotCount
 } from "./seed.ts";
@@ -31,8 +36,9 @@ const layer0Size = layer0Radius * 2;
 const layer0X = centre - layer0Radius;
 const layer0Y = centre - layer0Radius;
 const coreReferenceOpacity = 0.12;
-const codeStarSize = 6;
-const codeStarOpacity = 0.92;
+const codeStarSize = 10;
+const codeStarHaloRadius = 7;
+const codeStarOpacity = 1;
 
 function nestedSvg(
   body: string,
@@ -87,7 +93,7 @@ function registrationStars(
       const { x, y } = codeAnchorPoint(anchor);
       const body = starBody(asset, colour, `registration-${index}`);
 
-      return `<g data-code-anchor="${index}" opacity="0.58">${placedSvg(
+      return `<g data-code-anchor="${index}" opacity="0.72">${placedSvg(
         body,
         asset.viewBox,
         x,
@@ -103,15 +109,17 @@ function registrationStars(
 function codedStars(
   seed: string,
   asset: ReturnType<typeof parseSvg>,
-  colour: string
+  colour: string,
+  background: string
 ): string {
   const result: string[] = [];
 
   for (const symbol of seedSymbols(seed)) {
     const { x, y } = codeSymbolPoint(symbol.slot, symbol.value);
-    const style = hash32(`astrological-identicon/star-slot/v3:${symbol.slot}`);
+    const style = hash32(`astrological-identicon/star-slot/v4:${symbol.slot}`);
     const rotation = (style >>> 16) % 360;
     const body = starBody(asset, colour, `star-${symbol.slot}`);
+    const halo = `<circle cx="${x}" cy="${y}" r="${codeStarHaloRadius}" fill="${background}" opacity="0.92"/>`;
 
     result.push(
       `<g
@@ -121,7 +129,7 @@ function codedStars(
         data-code-value="${symbol.value.toString(16).toUpperCase()}"
         data-code-parity="${symbol.parity}"
         opacity="${codeStarOpacity}"
-      >${placedSvg(
+      >${halo}${placedSvg(
         body,
         asset.viewBox,
         x,
@@ -151,7 +159,12 @@ export async function buildIdenticon(value: IdenticonInput, assets: AssetSource)
   const starSource = await assets.star();
   const starAsset = parseSvg(starSource);
   const anchorLayer = registrationStars(starAsset, colours.layer0.reduced);
-  const codeLayer = codedStars(code, starAsset, colours.layer1.reduced);
+  const codeLayer = codedStars(
+    code,
+    starAsset,
+    colours.layer1.reduced,
+    colours.background.reduced
+  );
 
   const allSigns = new Set<Sign>([
     ...placements(value).map((item) => item.sign),
@@ -214,9 +227,9 @@ export async function buildIdenticon(value: IdenticonInput, assets: AssetSource)
   const data = escapeXml(JSON.stringify(value));
 
   return `<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="${canvas}" height="${canvas}" viewBox="0 0 ${canvas} ${canvas}" role="img" aria-label="${escapeXml(title)}" data-input="${data}" data-seed-code="${code}" data-palette-index="${paletteIndex}" data-code-version="2">
+<svg xmlns="http://www.w3.org/2000/svg" width="${canvas}" height="${canvas}" viewBox="0 0 ${canvas} ${canvas}" role="img" aria-label="${escapeXml(title)}" data-input="${data}" data-seed-code="${code}" data-palette-index="${paletteIndex}" data-code-version="3">
   <title>${escapeXml(title)}</title>
-  <metadata>Generated deterministically by astrological-identicon. Visual seed ${code}; palette code 6-bit-v1; star code reed-solomon-48-32-v2.</metadata>
+  <metadata>Generated deterministically by astrological-identicon. Visual seed ${code}; palette code 6-bit-v1; star code reed-solomon-${seedCodewordByteCount}-${seedCodewordByteCount - seedParityByteCount}-v3.</metadata>
   <defs>
     <clipPath id="inner-clip">
       <circle cx="${centre}" cy="${centre}" r="${innerClipRadius}"/>
@@ -263,10 +276,14 @@ export async function buildIdenticon(value: IdenticonInput, assets: AssetSource)
 
   <g
     id="coded-stars"
-    data-code="reed-solomon-48-32-v2"
+    data-code="reed-solomon-${seedCodewordByteCount}-${seedCodewordByteCount - seedParityByteCount}-v3"
     data-code-slots="${seedSlotCount}"
+    data-code-tracks="${codeTrackCount}"
+    data-code-sectors="${codeSectorCount}"
     data-code-colour="layer1"
     data-code-symbol-size="${codeStarSize}"
+    data-code-symbol-spacing="${codeSymbolSpacing}"
+    data-code-halo-radius="${codeStarHaloRadius}"
     clip-path="url(#inner-clip)"
   >
     ${codeLayer}
