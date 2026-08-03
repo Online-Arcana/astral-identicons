@@ -34,17 +34,16 @@ describe("local outer-circle detector", () => {
   test("recovers a bright circular ring", () => {
     const result = detectOuterCircle(frame(192, 101, 91, 82));
 
-    expect(result).not.toBeNull();
-    expect(result!.x).toBeGreaterThanOrEqual(98);
-    expect(result!.x).toBeLessThanOrEqual(104);
-    expect(result!.y).toBeGreaterThanOrEqual(88);
-    expect(result!.y).toBeLessThanOrEqual(94);
-    expect(result!.radius).toBeGreaterThanOrEqual(79);
-    expect(result!.radius).toBeLessThanOrEqual(85);
-    expect(result!.confidence).toBeGreaterThan(0.25);
+    expect(result === null).toBe(false);
+    if (!result) throw new Error("expected a detected circle");
+
+    expect(result.x >= 98 && result.x <= 104).toBe(true);
+    expect(result.y >= 88 && result.y <= 94).toBe(true);
+    expect(result.radius >= 79 && result.radius <= 85).toBe(true);
+    expect(result.confidence > 0.25).toBe(true);
   });
 
   test("rejects a blank frame", () => {
-    expect(detectOuterCircle(frame(192))).toBeNull();
+    expect(detectOuterCircle(frame(192))).toBe(null);
   });
 });
