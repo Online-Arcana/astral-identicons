@@ -72,11 +72,8 @@ jobs:
             exit 1
           fi
 
-      - name: Install browser diagnostics
-        shell: bash
-        run: |
-          npm install --no-save playwright@1.54.2
-          npx playwright install --with-deps chromium webkit
+      - name: Install browser diagnostic driver
+        run: npm install --no-save playwright-core@1.54.2
 
-      - name: Exercise deployed scanner in Chromium and WebKit
+      - name: Exercise deployed scanner in Chromium
         run: node scripts/diagnose-live.mjs
