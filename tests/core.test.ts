@@ -1,17 +1,25 @@
 import { describe, expect, test } from "bun:test";
 import { buildIdenticon } from "../src/build.ts";
+import {
+  codeAnchorPoint,
+  codeAnchors,
+  codeSlotPoint,
+  codeSymbolPoint
+} from "../src/code-layout.ts";
 import { input } from "../src/input.ts";
 import {
   palette,
   paletteForIndex,
   paletteIndexFromReduced
 } from "../src/palette.ts";
+import { matchPalette, type Rgb } from "../src/scan-colour.ts";
 import {
   decodeSeedNibbles,
   encodedSeedNibbles,
   seedCode,
   seedNibbleSlot,
-  seedPaletteIndex
+  seedPaletteIndex,
+  seedSlotCount
 } from "../src/seed.ts";
 import type { AssetSource } from "../src/types.ts";
 
@@ -31,6 +39,16 @@ const assets: AssetSource = {
   sigil: async () => simpleAsset,
   star: async () => simpleAsset
 };
+
+function rgb(value: string): Rgb {
+  const digits = value.slice(1).split("");
+
+  return {
+    r: Number.parseInt(digits[0]! + digits[0]!, 16),
+    g: Number.parseInt(digits[1]! + digits[1]!, 16),
+    b: Number.parseInt(digits[2]! + digits[2]!, 16)
+  };
+}
 
 describe("visual seed", () => {
   test("normalises input to a recoverable 256-bit code", () => {
@@ -75,6 +93,52 @@ describe("visual seed", () => {
   });
 });
 
+describe("visual scanner geometry", () => {
+  test("uses the same 96 deterministic slots as the renderer", () => {
+    const points = new Set<string>();
+
+    for (let slot = 0; slot < seedSlotCount; slot += 1) {
+      const point = codeSlotPoint(slot);
+      points.add(`${point.x.toFixed(6)}:${point.y.toFixed(6)}`);
+    }
+
+    expect(points.size).toBe(seedSlotCount);
+  });
+
+  test("maps all sixteen symbols to distinct offsets", () => {
+    const points = new Set<string>();
+
+    for (let value = 0; value < 16; value += 1) {
+      const point = codeSymbolPoint(0, value);
+      points.add(`${point.x}:${point.y}`);
+    }
+
+    expect(points.size).toBe(16);
+  });
+
+  test("uses asymmetric registration anchors", () => {
+    const keys = new Set(codeAnchors.map((anchor) => {
+      const point = codeAnchorPoint(anchor);
+      return `${point.x.toFixed(3)}:${point.y.toFixed(3)}:${anchor.size}`;
+    }));
+
+    expect(keys.size).toBe(3);
+  });
+
+  test("recovers an exact palette codebook entry", () => {
+    const index = 37;
+    const value = paletteForIndex(index);
+    const match = matchPalette(
+      rgb(value.background.reduced),
+      rgb(value.layer0.reduced),
+      rgb(value.layer1.reduced)
+    );
+
+    expect(match.index).toBe(index);
+    expect(match.cost).toBe(0);
+  });
+});
+
 describe("palette", () => {
   test("is deterministic and reduced", () => {
     const first = palette("test-seed");
@@ -107,6 +171,7 @@ describe("builder", () => {
     expect(first).toContain('id="background-stars"');
     expect(first).toContain('id="foreground-layer-0"');
     expect(first).toContain('id="foreground-layer-1-core"');
+    expect(first).toContain('data-recognition-role="upright-sign-reference"');
     expect(first).toContain('id="ring-system"');
     expect(first).not.toContain("currentColor");
     expect(first).not.toContain("<style");
