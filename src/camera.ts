@@ -16,7 +16,7 @@ function nameOf(error: unknown): string {
 
 function messageOf(error: unknown): string {
   if (!error || typeof error !== "object") return String(error);
-  if (!("message" in error)) return String(error);
+  if (!("message" in error)) return String(error.message);
   return String(error.message);
 }
 
@@ -101,7 +101,10 @@ export function requestCamera(
   const request = devices.getUserMedia({
     audio: false,
     video: {
-      facingMode: { ideal: "environment" }
+      facingMode: { ideal: "environment" },
+      width: { ideal: 1920 },
+      height: { ideal: 1080 },
+      frameRate: { ideal: 30 }
     }
   });
 
