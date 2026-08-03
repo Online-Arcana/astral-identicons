@@ -1,13 +1,19 @@
 import { fileAssets } from "./assets.ts";
 import { buildIdenticon } from "./build.ts";
 import { input } from "./input.ts";
+import { page } from "./page.ts";
 import { sign } from "./sign.ts";
 import type { RawIdenticonInput } from "./types.ts";
 
 const root = `${import.meta.dir}/..`;
 const assetsRoot = `${root}/assets`;
 const assets = fileAssets(assetsRoot);
-const index = await Bun.file(`${root}/public/index.html`).text();
+const sourceIndex = await Bun.file(`${root}/public/index.html`).text();
+const index = page(sourceIndex, {
+  script: "/app.js",
+  stylesheet: "/responsive.css"
+});
+const responsiveStyle = Bun.file(`${root}/public/responsive.css`);
 const build = await Bun.build({
   entrypoints: [`${root}/src/web.ts`],
   target: "browser",
@@ -71,11 +77,24 @@ const server = Bun.serve({
 
     try {
       if (request.method === "GET" && url.pathname === "/") {
-        return new Response(index, { headers: { "content-type": "text/html; charset=utf-8" } });
+        return new Response(index, {
+          headers: { "content-type": "text/html; charset=utf-8" }
+        });
       }
 
       if (request.method === "GET" && url.pathname === "/app.js") {
-        return new Response(app, { headers: { "content-type": "text/javascript; charset=utf-8" } });
+        return new Response(app, {
+          headers: { "content-type": "text/javascript; charset=utf-8" }
+        });
+      }
+
+      if (request.method === "GET" && url.pathname === "/responsive.css") {
+        return new Response(responsiveStyle, {
+          headers: {
+            "content-type": "text/css; charset=utf-8",
+            "cache-control": "no-cache"
+          }
+        });
       }
 
       if (request.method === "GET" && url.pathname.startsWith("/assets/")) {
