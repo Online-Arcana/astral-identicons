@@ -31,6 +31,8 @@ const layer0Size = layer0Radius * 2;
 const layer0X = centre - layer0Radius;
 const layer0Y = centre - layer0Radius;
 const coreReferenceOpacity = 0.12;
+const codeStarSize = 6;
+const codeStarOpacity = 0.92;
 
 function nestedSvg(
   body: string,
@@ -85,7 +87,7 @@ function registrationStars(
       const { x, y } = codeAnchorPoint(anchor);
       const body = starBody(asset, colour, `registration-${index}`);
 
-      return `<g data-code-anchor="${index}" opacity="0.34">${placedSvg(
+      return `<g data-code-anchor="${index}" opacity="0.58">${placedSvg(
         body,
         asset.viewBox,
         x,
@@ -98,18 +100,16 @@ function registrationStars(
     .join("\n");
 }
 
-function stars(
+function codedStars(
   seed: string,
   asset: ReturnType<typeof parseSvg>,
   colour: string
 ): string {
-  const result: string[] = [registrationStars(asset, colour)];
+  const result: string[] = [];
 
   for (const symbol of seedSymbols(seed)) {
     const { x, y } = codeSymbolPoint(symbol.slot, symbol.value);
-    const style = hash32(`astrological-identicon/star-slot/v2:${symbol.slot}`);
-    const size = 6 + (style % 10);
-    const opacity = 0.18 + ((style >>> 8) % 9) / 100;
+    const style = hash32(`astrological-identicon/star-slot/v3:${symbol.slot}`);
     const rotation = (style >>> 16) % 360;
     const body = starBody(asset, colour, `star-${symbol.slot}`);
 
@@ -120,8 +120,16 @@ function stars(
         data-code-nibble="${symbol.half}"
         data-code-value="${symbol.value.toString(16).toUpperCase()}"
         data-code-parity="${symbol.parity}"
-        opacity="${opacity.toFixed(2)}"
-      >${placedSvg(body, asset.viewBox, x, y, size, "", rotation)}</g>`
+        opacity="${codeStarOpacity}"
+      >${placedSvg(
+        body,
+        asset.viewBox,
+        x,
+        y,
+        codeStarSize,
+        "",
+        rotation
+      )}</g>`
     );
   }
 
@@ -142,7 +150,8 @@ export async function buildIdenticon(value: IdenticonInput, assets: AssetSource)
 
   const starSource = await assets.star();
   const starAsset = parseSvg(starSource);
-  const starLayer = stars(code, starAsset, colours.layer0.reduced);
+  const anchorLayer = registrationStars(starAsset, colours.layer0.reduced);
+  const codeLayer = codedStars(code, starAsset, colours.layer1.reduced);
 
   const allSigns = new Set<Sign>([
     ...placements(value).map((item) => item.sign),
@@ -205,24 +214,15 @@ export async function buildIdenticon(value: IdenticonInput, assets: AssetSource)
   const data = escapeXml(JSON.stringify(value));
 
   return `<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="${canvas}" height="${canvas}" viewBox="0 0 ${canvas} ${canvas}" role="img" aria-label="${escapeXml(title)}" data-input="${data}" data-seed-code="${code}" data-palette-index="${paletteIndex}" data-code-version="1">
+<svg xmlns="http://www.w3.org/2000/svg" width="${canvas}" height="${canvas}" viewBox="0 0 ${canvas} ${canvas}" role="img" aria-label="${escapeXml(title)}" data-input="${data}" data-seed-code="${code}" data-palette-index="${paletteIndex}" data-code-version="2">
   <title>${escapeXml(title)}</title>
-  <metadata>Generated deterministically by astrological-identicon. Visual seed ${code}; palette code 6-bit-v1; star code reed-solomon-48-32-v1.</metadata>
+  <metadata>Generated deterministically by astrological-identicon. Visual seed ${code}; palette code 6-bit-v1; star code reed-solomon-48-32-v2.</metadata>
   <defs>
     <clipPath id="inner-clip">
       <circle cx="${centre}" cy="${centre}" r="${innerClipRadius}"/>
     </clipPath>
   </defs>
   <rect id="background" x="0" y="0" width="${canvas}" height="${canvas}" fill="${colours.background.reduced}"/>
-
-  <g
-    id="background-stars"
-    data-code="reed-solomon-48-32-v1"
-    data-code-slots="${seedSlotCount}"
-    clip-path="url(#inner-clip)"
-  >
-    ${starLayer}
-  </g>
 
   <g
     id="foreground-layer-0"
@@ -250,6 +250,26 @@ export async function buildIdenticon(value: IdenticonInput, assets: AssetSource)
     clip-path="url(#inner-clip)"
   >
     ${innerSigils}
+  </g>
+
+  <g
+    id="registration-stars"
+    data-recognition-role="orientation-anchors"
+    data-code-colour="layer0"
+    clip-path="url(#inner-clip)"
+  >
+    ${anchorLayer}
+  </g>
+
+  <g
+    id="coded-stars"
+    data-code="reed-solomon-48-32-v2"
+    data-code-slots="${seedSlotCount}"
+    data-code-colour="layer1"
+    data-code-symbol-size="${codeStarSize}"
+    clip-path="url(#inner-clip)"
+  >
+    ${codeLayer}
   </g>
 
   <g id="ring-system">
