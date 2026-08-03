@@ -35,9 +35,12 @@ describe("local outer-circle detector", () => {
     const result = detectOuterCircle(frame(192, 101, 91, 82));
 
     expect(result).not.toBeNull();
-    expect(result!.x).toBeWithin(98, 104);
-    expect(result!.y).toBeWithin(88, 94);
-    expect(result!.radius).toBeWithin(79, 85);
+    expect(result!.x).toBeGreaterThanOrEqual(98);
+    expect(result!.x).toBeLessThanOrEqual(104);
+    expect(result!.y).toBeGreaterThanOrEqual(88);
+    expect(result!.y).toBeLessThanOrEqual(94);
+    expect(result!.radius).toBeGreaterThanOrEqual(79);
+    expect(result!.radius).toBeLessThanOrEqual(85);
     expect(result!.confidence).toBeGreaterThan(0.25);
   });
 
