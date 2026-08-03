@@ -317,7 +317,7 @@ function detectionFrame(canvas: HTMLCanvasElement): PixelFrame {
 export function captureVideo(
   video: HTMLVideoElement,
   canvas: HTMLCanvasElement,
-  size = 720
+  size?: number
 ): void {
   const width = video.videoWidth;
   const height = video.videoHeight;
@@ -326,16 +326,16 @@ export function captureVideo(
     throw new Error("The camera has not produced a frame yet");
   }
 
-  canvas.width = size;
-  canvas.height = size;
-
   const sourceSize = Math.min(width, height);
+  const targetSize = size ?? Math.min(1440, Math.max(1024, sourceSize));
   const sourceX = (width - sourceSize) / 2;
   const sourceY = (height - sourceSize) / 2;
   const context = canvas.getContext("2d", { willReadFrequently: true });
 
   if (!context) throw new Error("Could not access the camera canvas");
 
+  canvas.width = targetSize;
+  canvas.height = targetSize;
   context.drawImage(
     video,
     sourceX,
@@ -344,8 +344,8 @@ export function captureVideo(
     sourceSize,
     0,
     0,
-    size,
-    size
+    targetSize,
+    targetSize
   );
 }
 
