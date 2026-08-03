@@ -13,7 +13,7 @@ const index = page(sourceIndex, {
   script: "/app.js",
   stylesheet: "/responsive.css"
 });
-const responsiveStyle = Bun.file(`${root}/public/responsive.css`);
+const responsiveStyle = await Bun.file(`${root}/public/responsive.css`).text();
 const build = await Bun.build({
   entrypoints: [`${root}/src/web.ts`],
   target: "browser",
