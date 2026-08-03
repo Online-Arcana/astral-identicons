@@ -12,6 +12,7 @@ import {
   type Circle
 } from "./scan-cv.ts";
 import {
+  alignPaletteToIndex,
   findOrientation,
   observePalette,
   swapPalette,
@@ -21,16 +22,7 @@ import {
   readSeed,
   type SeedReading
 } from "./scan-seed.ts";
-import {
-  classifyConstellation,
-  classifySigns,
-  type SignReading,
-  type SignResult
-} from "./scan-sign.ts";
-import {
-  seedPaletteIndex,
-  seedParityByteCount
-} from "./seed.ts";
+import { seedPaletteIndex } from "./seed.ts";
 import type { IdenticonInput } from "./types.ts";
 
 export interface ScanResult extends IdenticonInput {
@@ -38,28 +30,25 @@ export interface ScanResult extends IdenticonInput {
   orientation: number;
   uncertainStars: number;
   correctedBytes: number;
-  visualSignMismatches: number;
-  signs: SignReading;
 }
 
 interface ScannerOptions {
   apply(result: ScanResult): void;
 }
 
-interface EvaluatedFrame {
+interface PayloadCandidate {
   canvas: HTMLCanvasElement;
   data: ImageData;
   angle: number;
-  constellation: SignResult;
   palette: ObservedPalette;
-  seed: SeedReading | undefined;
-  signs: SignReading | undefined;
+  reading: SeedReading;
   score: number;
 }
 
-const automaticInterval = 260;
-const retryInterval = 520;
-const stableFrameCount = 3;
+const automaticInterval = 120;
+const coarseOffsets = [0, 90, 180, 270] as const;
+const fallbackOffsets = [-3, -1.5, 1.5, 3] as const;
+const refineOffsets = [-2, -1, -0.5, 0.5, 1, 2] as const;
 
 function required<T extends Element>(selector: string): T {
   const value = document.querySelector<T>(selector);
@@ -162,188 +151,149 @@ function captureImage(
   );
 }
 
-const signRoles = [
-  "solar",
-  "lunar",
-  "ascendant",
-  "midheaven",
-  "descendant",
-  "imumCoeli"
-] as const;
-
-function signEvidence(signs: SignReading, value: IdenticonInput): number {
-  let score = 0;
-
-  for (const role of signRoles) {
-    const observation = signs[role];
-    const confidence = Math.min(0.4, observation.confidence * 8);
-    score += observation.sign === value[role]
-      ? 0.35 + confidence
-      : -confidence;
-  }
-
-  return score;
-}
-
-function frameScore(
-  constellation: SignResult,
+function payloadScore(
+  reading: SeedReading,
   palette: ObservedPalette,
-  seed: SeedReading | undefined,
-  signs: SignReading | undefined
+  anchorConfidence: number
 ): number {
-  if (!seed) return constellation.score;
+  const expectedPalette = seedPaletteIndex(reading.value.seed);
+  const paletteAgreement = expectedPalette === palette.index
+    ? 5 + palette.confidence * 3
+    : 0;
 
-  let score = 8 + seed.confidence * 2;
-  score -= seed.erasures / Math.max(1, seedParityByteCount);
-
-  if (seed.value.solar === constellation.sign) {
-    score += 2 + Math.min(1, constellation.confidence * 12);
-  }
-
-  if (seedPaletteIndex(seed.value.seed) === palette.index) {
-    score += Math.max(0, palette.confidence);
-  }
-
-  if (signs) score += signEvidence(signs, seed.value);
-  return score;
+  return (
+    20 +
+    reading.confidence * 8 +
+    anchorConfidence * 2 +
+    paletteAgreement -
+    reading.erasures * 0.8 -
+    reading.uncertainStars * 0.06
+  );
 }
 
-async function evaluateFrame(
+function readCandidate(
   source: HTMLCanvasElement,
   palette: ObservedPalette,
-  angle: number
-): Promise<EvaluatedFrame> {
+  angle: number,
+  anchorConfidence: number
+): PayloadCandidate | undefined {
   const canvas = rotated(source, angle);
   const data = imageData(canvas);
-  const constellation = await classifyConstellation(data, palette);
-  let seed: SeedReading | undefined;
-  let signs: SignReading | undefined;
 
   try {
-    seed = readSeed(data, palette);
-    signs = await classifySigns(data, palette, constellation);
-  } catch {
-    seed = undefined;
-    signs = undefined;
-  }
+    const reading = readSeed(data, palette);
 
-  return {
-    canvas,
-    data,
-    angle,
-    constellation,
-    palette,
-    seed,
-    signs,
-    score: frameScore(constellation, palette, seed, signs)
-  };
+    return {
+      canvas,
+      data,
+      angle,
+      palette,
+      reading,
+      score: payloadScore(reading, palette, anchorConfidence)
+    };
+  } catch {
+    return undefined;
+  }
 }
 
 function better(
-  current: EvaluatedFrame | undefined,
-  candidate: EvaluatedFrame
-): EvaluatedFrame {
+  current: PayloadCandidate | undefined,
+  candidate: PayloadCandidate
+): PayloadCandidate {
   if (!current) return candidate;
-  if (Boolean(candidate.seed) !== Boolean(current.seed)) {
-    return candidate.seed ? candidate : current;
+  if (candidate.reading.erasures !== current.reading.erasures) {
+    return candidate.reading.erasures < current.reading.erasures
+      ? candidate
+      : current;
   }
+
   return candidate.score > current.score ? candidate : current;
 }
 
-async function orientationCandidates(
+function isStrong(candidate: PayloadCandidate): boolean {
+  return (
+    candidate.reading.erasures <= 4 &&
+    candidate.reading.uncertainStars <= 12
+  );
+}
+
+function refinePayload(
   source: HTMLCanvasElement,
-  palette: ObservedPalette,
-  anchorAngle: number
-): Promise<EvaluatedFrame> {
-  const coarseAngles = [0, 90, 180, 270].map((offset) => {
-    return normalisedAngle(anchorAngle + offset);
-  });
-  const coarse: EvaluatedFrame[] = [];
-  let best: EvaluatedFrame | undefined;
+  candidate: PayloadCandidate
+): PayloadCandidate {
+  if (isStrong(candidate)) return candidate;
 
-  for (const angle of coarseAngles) {
-    const candidate = await evaluateFrame(source, palette, angle);
-    coarse.push(candidate);
-    best = better(best, candidate);
+  const paletteIndex = seedPaletteIndex(candidate.reading.value.seed);
+  const palette = alignPaletteToIndex(candidate.palette, paletteIndex);
+  let best = candidate;
+
+  for (const offset of refineOffsets) {
+    const angle = normalisedAngle(candidate.angle + offset);
+    const refined = readCandidate(source, palette, angle, 1);
+    if (!refined) continue;
+    best = better(best, refined);
+    if (isStrong(best)) break;
   }
 
-  const valid = coarse
-    .filter((candidate) => candidate.seed)
-    .sort((left, right) => right.score - left.score);
-  const bases = valid.length > 0
-    ? valid.slice(0, 1)
-    : [...coarse]
-      .sort((left, right) => right.constellation.score - left.constellation.score)
-      .slice(0, 2);
-
-  for (const base of bases) {
-    for (const offset of [-4, -2, -1, 1, 2, 4]) {
-      const angle = normalisedAngle(base.angle + offset);
-      const candidate = await evaluateFrame(source, palette, angle);
-      best = better(best, candidate);
-    }
-  }
-
-  if (!best) throw new Error("Could not determine identicon orientation");
   return best;
 }
 
-async function bestOrientation(
+function bestPayload(
   source: HTMLCanvasElement,
   rawData: ImageData,
   observed: ObservedPalette
-): Promise<EvaluatedFrame> {
+): PayloadCandidate {
   const palettes = [observed, swapPalette(observed)];
-  let best: EvaluatedFrame | undefined;
+  let best: PayloadCandidate | undefined;
 
   for (const palette of palettes) {
     const anchor = findOrientation(rawData, palette);
-    const candidate = await orientationCandidates(source, palette, anchor.angle);
-    best = better(best, candidate);
+    const bases = coarseOffsets.map((offset) => {
+      return normalisedAngle(anchor.angle + offset);
+    });
+
+    for (const angle of bases) {
+      const candidate = readCandidate(
+        source,
+        palette,
+        angle,
+        anchor.confidence
+      );
+
+      if (!candidate) continue;
+      best = better(best, candidate);
+      if (isStrong(candidate)) return candidate;
+    }
+
+    if (best) continue;
+
+    for (const base of bases) {
+      for (const offset of fallbackOffsets) {
+        const candidate = readCandidate(
+          source,
+          palette,
+          normalisedAngle(base + offset),
+          anchor.confidence
+        );
+
+        if (!candidate) continue;
+        best = better(best, candidate);
+        if (isStrong(candidate)) return candidate;
+      }
+    }
   }
 
-  if (!best?.seed) {
-    throw new Error("The exact seed and sign payload is not stable yet");
+  if (!best) {
+    throw new Error("The captured star payload could not be reconstructed");
   }
 
-  return best;
-}
-
-function visualSignMismatches(
-  signs: SignReading,
-  value: IdenticonInput
-): number {
-  return signRoles.filter((role) => signs[role].sign !== value[role]).length;
-}
-
-function softFailure(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error);
-
-  if (
-    message.includes("payload") ||
-    message.includes("Reed-Solomon") ||
-    message.includes("star")
-  ) {
-    return "Identicon found. Reconstructing the exact seed and signs from the correction stars…";
-  }
-
-  if (message.includes("orientation") || message.includes("orient")) {
-    return "Identicon found. Resolving its upright orientation…";
-  }
-
-  return "Identicon found. Hold it steady while the scanner resolves the details…";
-}
-
-function circlesMatch(left: Circle, right: Circle): boolean {
-  const tolerance = Math.max(6, right.radius * 0.035);
-  const centreShift = Math.hypot(left.x - right.x, left.y - right.y);
-  const radiusShift = Math.abs(left.radius - right.radius);
-
-  return centreShift <= tolerance && radiusShift <= tolerance;
+  return refinePayload(source, best);
 }
 
 export class Scanner {
   readonly #dialog = required<HTMLDialogElement>("#scan-dialog");
+  readonly #stage = required<HTMLElement>(".scan-stage");
+  readonly #guide = required<HTMLElement>(".scan-guide");
   readonly #video = required<HTMLVideoElement>("#scan-video");
   readonly #capture = required<HTMLCanvasElement>("#scan-capture");
   readonly #normalised = required<HTMLCanvasElement>("#scan-normalised");
@@ -351,18 +301,37 @@ export class Scanner {
   readonly #upload = required<HTMLButtonElement>("#scan-upload");
   readonly #file = required<HTMLInputElement>("#scan-file");
   readonly #close = required<HTMLButtonElement>("#scan-close");
+  readonly #frozen: HTMLCanvasElement;
   readonly #options: ScannerOptions;
 
   #stream: MediaStream | undefined;
   #openRequest: Promise<void> | undefined;
   #timer: number | undefined;
-  #lastCircle: Circle | undefined;
-  #stableFrames = 0;
   #decoding = false;
   #session = 0;
 
   constructor(options: ScannerOptions) {
     this.#options = options;
+    this.#frozen = document.createElement("canvas");
+    this.#frozen.width = 1024;
+    this.#frozen.height = 1024;
+    this.#frozen.setAttribute("aria-label", "Captured identicon frame");
+    Object.assign(this.#frozen.style, {
+      position: "absolute",
+      inset: "0",
+      inlineSize: "100%",
+      blockSize: "100%",
+      maxInlineSize: "100%",
+      display: "none",
+      background: "#050507"
+    });
+    this.#stage.append(this.#frozen);
+
+    const copy = document.querySelector<HTMLElement>(".scan-copy p");
+    if (copy) {
+      copy.textContent =
+        "The scanner captures as soon as the complete identicon is framed, then reconstructs from the frozen image. You do not need to keep holding it still.";
+    }
 
     this.#close.addEventListener("click", () => this.close());
     this.#upload.addEventListener("click", () => this.#file.click());
@@ -403,6 +372,7 @@ export class Scanner {
   private async start(): Promise<void> {
     const session = ++this.#session;
 
+    this.resetViewport();
     this.#dialog.showModal();
     this.#upload.disabled = false;
     this.message(
@@ -437,7 +407,7 @@ export class Scanner {
       }
 
       this.message(
-        "Camera ready. Keep the complete outer circle inside the guide; recognition is automatic."
+        "Camera ready. Put the complete outer circle inside the guide; it will capture immediately."
       );
       this.scheduleAutomatic(0);
     } catch (error) {
@@ -446,17 +416,54 @@ export class Scanner {
     }
   }
 
-  private stop(): void {
+  private stopCamera(): void {
     if (this.#timer !== undefined) window.clearTimeout(this.#timer);
     this.#timer = undefined;
-    this.#lastCircle = undefined;
-    this.#stableFrames = 0;
-    this.#decoding = false;
 
     if (this.#stream) stopStream(this.#stream);
     this.#stream = undefined;
     this.#video.srcObject = null;
+  }
+
+  private stop(): void {
+    this.stopCamera();
+    this.#decoding = false;
+    this.resetViewport();
     this.#upload.disabled = false;
+  }
+
+  private resetViewport(): void {
+    this.#stage.classList.remove("captured");
+    this.#video.style.display = "";
+    this.#guide.style.display = "";
+    this.#frozen.style.display = "none";
+
+    const normalisedContext = context(this.#normalised);
+    normalisedContext.clearRect(
+      0,
+      0,
+      this.#normalised.width,
+      this.#normalised.height
+    );
+    context(this.#frozen).clearRect(0, 0, this.#frozen.width, this.#frozen.height);
+  }
+
+  private showFrozen(source: HTMLCanvasElement): void {
+    this.#frozen.width = source.width;
+    this.#frozen.height = source.height;
+    const frozenContext = context(this.#frozen);
+    frozenContext.clearRect(0, 0, this.#frozen.width, this.#frozen.height);
+    frozenContext.drawImage(source, 0, 0);
+    this.#video.style.display = "none";
+    this.#guide.style.display = "none";
+    this.#frozen.style.display = "block";
+  }
+
+  private freezeViewport(circle: Circle): void {
+    normaliseCircle(this.#capture, circle, this.#normalised);
+    this.stopCamera();
+    this.#stage.classList.add("captured");
+    this.showFrozen(this.#normalised);
   }
 
   private scheduleAutomatic(delay = automaticInterval): void {
@@ -469,47 +476,31 @@ export class Scanner {
     }, delay);
   }
 
-  private updateStability(circle: Circle): number {
-    const stable = this.#lastCircle && circlesMatch(this.#lastCircle, circle);
-    this.#stableFrames = stable ? this.#stableFrames + 1 : 1;
-    this.#lastCircle = circle;
-    return this.#stableFrames;
-  }
-
   private async automaticFrame(): Promise<void> {
-    if (!this.#stream || !this.#dialog.open) return;
-    if (this.#decoding) {
-      this.scheduleAutomatic();
-      return;
-    }
+    if (!this.#stream || !this.#dialog.open || this.#decoding) return;
 
     try {
       captureVideo(this.#video, this.#capture);
       const circle = findOuterCircle(this.#capture);
 
       if (!circle) {
-        this.#lastCircle = undefined;
-        this.#stableFrames = 0;
         this.message("Looking for the complete outer circle…");
         this.scheduleAutomatic();
         return;
       }
 
-      if (this.updateStability(circle) < stableFrameCount) {
-        this.message("Outer circle found. Hold the identicon steady…");
-        this.scheduleAutomatic();
-        return;
-      }
-
       this.#decoding = true;
-      this.message("Identicon recognised. Recovering its exact fields…");
+      this.freezeViewport(circle);
+      this.message(
+        "Captured. You can move the identicon now while its exact fields are reconstructed."
+      );
+      await nextPaint();
 
-      const result = await this.decodeCircle(circle);
+      const result = this.decodeCaptured();
       this.#options.apply(result);
       this.close();
     } catch (error) {
-      this.message(softFailure(error));
-      this.scheduleAutomatic(retryInterval);
+      this.processingError(error);
     } finally {
       this.#decoding = false;
     }
@@ -527,26 +518,27 @@ export class Scanner {
       const image = await loadImage(file);
       captureImage(image, this.#capture);
       const circle = findOuterCircle(this.#capture) ?? guideCircle(this.#capture);
-      const result = await this.decodeCircle(circle);
 
+      this.#decoding = true;
+      this.freezeViewport(circle);
+      this.message("Photo framed. Reconstructing its exact fields…");
+      await nextPaint();
+
+      const result = this.decodeCaptured();
       this.#options.apply(result);
       this.close();
     } finally {
+      this.#decoding = false;
       this.#upload.disabled = false;
     }
   }
 
-  private async decodeCircle(circle: Circle): Promise<ScanResult> {
-    normaliseCircle(this.#capture, circle, this.#normalised);
-
+  private decodeCaptured(): ScanResult {
     const rawData = imageData(this.#normalised);
     const observed = observePalette(rawData);
-    const oriented = await bestOrientation(
-      this.#normalised,
-      rawData,
-      observed
-    );
-    const reading = oriented.seed!;
+    const candidate = bestPayload(this.#normalised, rawData, observed);
+    const reading = candidate.reading;
+    const value = reading.value;
 
     const normalisedContext = context(this.#normalised);
     normalisedContext.clearRect(
@@ -555,23 +547,15 @@ export class Scanner {
       this.#normalised.width,
       this.#normalised.height
     );
-    normalisedContext.drawImage(oriented.canvas, 0, 0);
-
-    const signs = oriented.signs ?? await classifySigns(
-      oriented.data,
-      oriented.palette,
-      oriented.constellation
-    );
-    const value = reading.value;
+    normalisedContext.drawImage(candidate.canvas, 0, 0);
+    this.showFrozen(this.#normalised);
 
     return {
       ...value,
       paletteIndex: seedPaletteIndex(value.seed),
-      orientation: oriented.angle,
+      orientation: candidate.angle,
       uncertainStars: reading.uncertainStars,
-      correctedBytes: reading.erasures,
-      visualSignMismatches: visualSignMismatches(signs, value),
-      signs
+      correctedBytes: reading.erasures
     };
   }
 
@@ -581,13 +565,18 @@ export class Scanner {
   }
 
   private cameraError(error: unknown): void {
-    this.stop();
+    this.stopCamera();
     this.#status.textContent = `${cameraErrorMessage(error)} A saved photo can still be scanned.`;
     this.#status.className = "scan-status error";
   }
 
   private processingError(error: unknown): void {
-    this.#status.textContent = error instanceof Error ? error.message : String(error);
+    const message = error instanceof Error ? error.message : String(error);
+    const frozen = this.#stage.classList.contains("captured");
+
+    this.#status.textContent = frozen
+      ? `${message}. The frame is frozen; close and scan again, or choose another photo.`
+      : message;
     this.#status.className = "scan-status error";
     this.#upload.disabled = false;
   }

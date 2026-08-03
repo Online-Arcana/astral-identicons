@@ -30,6 +30,8 @@ interface RankedSymbol {
   score: number;
 }
 
+const strongestPixelCount = 12;
+
 function clamp(value: number, minimum: number, maximum: number): number {
   return Math.max(minimum, Math.min(maximum, value));
 }
@@ -41,26 +43,31 @@ function strongestEvidence(
   radius: number,
   palette: ObservedPalette
 ): number {
-  const values: number[] = [];
+  const strongest = Array<number>(strongestPixelCount).fill(0);
 
   for (let offsetY = -radius; offsetY <= radius; offsetY += 1) {
     for (let offsetX = -radius; offsetX <= radius; offsetX += 1) {
       if (offsetX * offsetX + offsetY * offsetY > radius * radius) continue;
 
-      values.push(colourEvidence(
+      const evidence = colourEvidence(
         pixel(image, x + offsetX, y + offsetY),
         palette.background,
         palette.layer1
-      ));
+      );
+
+      if (evidence <= strongest[strongest.length - 1]!) continue;
+
+      let index = strongest.length - 1;
+      while (index > 0 && evidence > strongest[index - 1]!) {
+        strongest[index] = strongest[index - 1]!;
+        index -= 1;
+      }
+      strongest[index] = evidence;
     }
   }
 
-  values.sort((left, right) => right - left);
-  const count = Math.max(4, Math.round(values.length * 0.24));
-  const selected = values.slice(0, count);
-
-  return selected.reduce((sum, value) => sum + value, 0) /
-    Math.max(1, selected.length);
+  return strongest.reduce((sum, value) => sum + value, 0) /
+    strongest.length;
 }
 
 function symbolScore(
@@ -76,7 +83,7 @@ function symbolScore(
     image,
     point.x * scale,
     point.y * scale,
-    Math.max(3, Math.round(5 * scale)),
+    Math.max(3, Math.round(4 * scale)),
     palette
   );
 }
@@ -86,16 +93,24 @@ function observeNibble(
   slot: number,
   palette: ObservedPalette
 ): NibbleObservation {
-  const scores: RankedSymbol[] = Array.from(
-    { length: 16 },
-    (_unused, value) => ({
+  let best: RankedSymbol = { value: 0, score: Number.NEGATIVE_INFINITY };
+  let second: RankedSymbol = { value: 0, score: Number.NEGATIVE_INFINITY };
+
+  for (let value = 0; value < 16; value += 1) {
+    const candidate = {
       value,
       score: symbolScore(image, slot, value, palette)
-    })
-  ).sort((left, right) => right.score - left.score);
+    };
 
-  const best = scores[0]!;
-  const second = scores[1]!;
+    if (candidate.score > best.score) {
+      second = best;
+      best = candidate;
+      continue;
+    }
+
+    if (candidate.score > second.score) second = candidate;
+  }
+
   const margin = best.score - second.score;
   const confidence = clamp(margin / Math.max(0.01, best.score), 0, 1);
 
