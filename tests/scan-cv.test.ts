@@ -1,7 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { innerRingRadius, outerRingRadius } from "../src/layout.ts";
+import {
+  canvas,
+  innerRingRadius,
+  outerRingRadius
+} from "../src/layout.ts";
 import {
   detectOuterCircle,
+  normalisationCrop,
   type PixelFrame
 } from "../src/scan-cv.ts";
 
@@ -64,5 +69,23 @@ describe("local outer-circle detector", () => {
 
   test("rejects a blank frame", () => {
     expect(detectOuterCircle(frame(192))).toBe(null);
+  });
+});
+
+describe("ring normalisation", () => {
+  test("maps the detected outer ring to its canonical 486-unit radius", () => {
+    const circle = {
+      x: 360,
+      y: 360,
+      radius: 342,
+      confidence: 1
+    };
+    const crop = normalisationCrop(circle);
+    const mappedRadius = circle.radius * canvas / crop.size;
+
+    expect(Math.abs(mappedRadius - outerRingRadius) < 0.000001).toBe(true);
+    expect(crop.size > circle.radius * 2).toBe(true);
+    expect(Math.abs(crop.x + crop.size / 2 - circle.x) < 0.000001).toBe(true);
+    expect(Math.abs(crop.y + crop.size / 2 - circle.y) < 0.000001).toBe(true);
   });
 });
