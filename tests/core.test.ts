@@ -189,10 +189,15 @@ describe("builder", () => {
     expect(first).toBe(second);
     expect(first).toContain('viewBox="0 0 1024 1024"');
     expect(first).toContain(`data-seed-code="${seedCode(sample.seed)}"`);
-    expect(first).toContain('data-code="reed-solomon-48-32-v1"');
+    expect(first).toContain('data-code-version="2"');
+    expect(first).toContain('data-code="reed-solomon-48-32-v2"');
     expect(first).toContain('data-code-slots="96"');
     expect(first).toContain('data-code-parity="true"');
-    expect(first).toContain('id="background-stars"');
+    expect(first).toContain('id="registration-stars"');
+    expect(first).toContain('id="coded-stars"');
+    expect(first).toContain('data-code-colour="layer1"');
+    expect(first).toContain('data-code-symbol-size="6"');
+    expect(first).toContain('opacity="0.92"');
     expect(first).toContain('id="foreground-layer-0"');
     expect(first).toContain('id="foreground-layer-1-core"');
     expect(first).toContain('data-recognition-role="upright-sign-reference"');

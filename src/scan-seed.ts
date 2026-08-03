@@ -41,13 +41,13 @@ function strongestEvidence(
       values.push(colourEvidence(
         pixel(image, x + offsetX, y + offsetY),
         palette.background,
-        palette.layer0
+        palette.layer1
       ));
     }
   }
 
   values.sort((left, right) => right - left);
-  const count = Math.max(3, Math.round(values.length * 0.18));
+  const count = Math.max(2, Math.round(values.length * 0.16));
   const selected = values.slice(0, count);
 
   return selected.reduce((sum, value) => sum + value, 0) /
@@ -67,7 +67,7 @@ function symbolScore(
     image,
     point.x * scale,
     point.y * scale,
-    Math.max(2, Math.round(4 * scale)),
+    Math.max(2, Math.round(3 * scale)),
     palette
   );
 }
@@ -90,7 +90,7 @@ function observeNibble(
   const margin = best.score - second.score;
   const confidence = clamp(margin / Math.max(0.01, best.score), 0, 1);
 
-  if (best.score < 0.075 || margin < 0.012) {
+  if (best.score < 0.12 || margin < 0.035) {
     return { value: null, confidence };
   }
 
