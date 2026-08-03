@@ -45,6 +45,7 @@ const assetCache = new Map<string, Promise<string>>();
 
 let renderVersion = 0;
 let latestSvg = "";
+let assetsWarmed = false;
 
 for (const [name, title] of fields) {
   const wrapper = document.createElement("div");
@@ -104,6 +105,23 @@ function getAsset(path: string): Promise<string> {
   }
 
   return request;
+}
+
+function warmAssets(): void {
+  if (assetsWarmed) return;
+  assetsWarmed = true;
+
+  const requests = [
+    getAsset("/assets/decor/star.svg"),
+    ...signs.flatMap((sign) => [
+      getAsset(`/assets/constellations/${sign}.svg`),
+      getAsset(`/assets/sigils/${sign}.svg`)
+    ])
+  ];
+
+  void Promise.all(requests).catch(() => {
+    assetsWarmed = false;
+  });
 }
 
 const browserAssets: AssetSource = {
@@ -213,6 +231,7 @@ const scanner = new Scanner({
 form.addEventListener("input", schedule);
 
 scan.addEventListener("click", () => {
+  warmAssets();
   void scanner.open().catch(showError);
 });
 
@@ -268,4 +287,6 @@ form.addEventListener("submit", async (event) => {
   }
 });
 
-void render().catch(showError);
+void render()
+  .then(() => window.setTimeout(warmAssets, 0))
+  .catch(showError);
