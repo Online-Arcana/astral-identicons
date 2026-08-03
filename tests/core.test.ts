@@ -13,6 +13,7 @@ import {
   paletteIndexFromReduced
 } from "../src/palette.ts";
 import { matchPalette, type Rgb } from "../src/scan-colour.ts";
+import { recoverSeedObservations } from "../src/scan-seed.ts";
 import {
   decodeSeedNibbles,
   encodedSeedNibbles,
@@ -90,6 +91,29 @@ describe("visual seed", () => {
 
     expect(paletteIndex).toBe(seedPaletteIndex(sample.seed));
     expect(decodeSeedNibbles(slots, paletteIndex)).toBe(seedCode(sample.seed));
+  });
+
+  test("turns low-confidence conflicting camera bytes into erasures", () => {
+    const observations = encodedSeedNibbles(sample.seed).map((value) => ({
+      value,
+      confidence: 1
+    }));
+
+    for (const byte of [3, 11, 22, 37]) {
+      const slot = seedNibbleSlot(byte * 2);
+      observations[slot] = {
+        value: (observations[slot]!.value + 5) % 16,
+        confidence: 0.001
+      };
+    }
+
+    const recovered = recoverSeedObservations(
+      observations,
+      seedPaletteIndex(sample.seed)
+    );
+
+    expect(recovered.seed).toBe(seedCode(sample.seed));
+    expect(recovered.erasures).toBe(4);
   });
 });
 
