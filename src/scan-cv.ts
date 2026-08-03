@@ -1,3 +1,5 @@
+import { outerRingRadius, ringStroke } from "./layout.ts";
+
 export interface Circle {
   x: number;
   y: number;
@@ -227,6 +229,48 @@ export function findOuterCircle(cv: CvApi, canvas: HTMLCanvasElement): Circle | 
   }
 }
 
+function backgroundFromAnnulus(canvas: HTMLCanvasElement): string {
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  if (!context) return "#000";
+
+  const image = context.getImageData(0, 0, canvas.width, canvas.height);
+  const centre = canvas.width / 2;
+  const scale = canvas.width / 1024;
+  const samples: Array<{ r: number; g: number; b: number; light: number }> = [];
+
+  for (let angle = 0; angle < 360; angle += 2) {
+    const radians = angle * Math.PI / 180;
+
+    for (const radius of [410, 416, 422]) {
+      const x = Math.round(centre + Math.cos(radians) * radius * scale);
+      const y = Math.round(centre + Math.sin(radians) * radius * scale);
+      const index = (y * image.width + x) * 4;
+      const red = image.data[index]!;
+      const green = image.data[index + 1]!;
+      const blue = image.data[index + 2]!;
+
+      samples.push({
+        r: red,
+        g: green,
+        b: blue,
+        light: red * 0.2126 + green * 0.7152 + blue * 0.0722
+      });
+    }
+  }
+
+  samples.sort((left, right) => left.light - right.light);
+  const selected = samples.slice(0, Math.max(12, Math.round(samples.length * 0.35)));
+  const total = selected.reduce((value, sample) => {
+    value.r += sample.r;
+    value.g += sample.g;
+    value.b += sample.b;
+    return value;
+  }, { r: 0, g: 0, b: 0 });
+
+  const count = Math.max(1, selected.length);
+  return `rgb(${Math.round(total.r / count)} ${Math.round(total.g / count)} ${Math.round(total.b / count)})`;
+}
+
 export function normaliseCircle(
   source: HTMLCanvasElement,
   circle: Circle,
@@ -239,12 +283,19 @@ export function normaliseCircle(
   target.width = size;
   target.height = size;
 
-  const sourceSize = circle.radius * 2;
-  context.clearRect(0, 0, size, size);
-  context.drawImage(
+  const temporary = document.createElement("canvas");
+  temporary.width = size;
+  temporary.height = size;
+  const temporaryContext = temporary.getContext("2d", { willReadFrequently: true });
+  if (!temporaryContext) throw new Error("Could not create a normalisation canvas");
+
+  const cropRadius = circle.radius * (size / 2) / outerRingRadius;
+  const sourceSize = cropRadius * 2;
+
+  temporaryContext.drawImage(
     source,
-    circle.x - circle.radius,
-    circle.y - circle.radius,
+    circle.x - cropRadius,
+    circle.y - cropRadius,
     sourceSize,
     sourceSize,
     0,
@@ -252,4 +303,22 @@ export function normaliseCircle(
     size,
     size
   );
+
+  const background = backgroundFromAnnulus(temporary);
+  context.clearRect(0, 0, size, size);
+  context.fillStyle = background;
+  context.fillRect(0, 0, size, size);
+
+  context.save();
+  context.beginPath();
+  context.arc(
+    size / 2,
+    size / 2,
+    (outerRingRadius + ringStroke) * size / 1024,
+    0,
+    Math.PI * 2
+  );
+  context.clip();
+  context.drawImage(temporary, 0, 0);
+  context.restore();
 }
