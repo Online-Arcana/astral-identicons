@@ -5,6 +5,14 @@ const engines = [
   ["chromium", chromium],
   ["webkit", webkit]
 ];
+const signFields = [
+  "solar",
+  "lunar",
+  "ascendant",
+  "midheaven",
+  "descendant",
+  "imumCoeli"
+];
 
 for (const [name, engine] of engines) {
   const browser = await engine.launch({ headless: true });
@@ -70,6 +78,18 @@ for (const [name, engine] of engines) {
     throw new Error(`${name}: preview is too wide at ${preview.width}px`);
   }
 
+  const expectedSeed = await page.locator("#status").textContent().then((text) => {
+    const match = text?.match(/Visual seed ([0-9A-F]{64})/);
+    if (!match) throw new Error(`${name}: could not read the expected visual seed`);
+    return match[1];
+  });
+
+  const expectedSigns = Object.fromEntries(await Promise.all(
+    signFields.map(async (field) => {
+      return [field, await page.locator(`#${field}`).inputValue()];
+    })
+  ));
+
   const identicon = await previewElement.screenshot({ type: "png" });
 
   await page.locator("#scan").click();
@@ -127,6 +147,22 @@ for (const [name, engine] of engines) {
 
   if (failed) {
     throw new Error(`${name}: decoder failed at: ${final}`);
+  }
+
+  const recoveredSeed = await page.locator("#seed").inputValue();
+  if (recoveredSeed !== expectedSeed) {
+    throw new Error(
+      `${name}: recovered seed ${recoveredSeed} does not match ${expectedSeed}`
+    );
+  }
+
+  for (const field of signFields) {
+    const recovered = await page.locator(`#${field}`).inputValue();
+    if (recovered === expectedSigns[field]) continue;
+
+    throw new Error(
+      `${name}: recovered ${field}=${recovered}, expected ${expectedSigns[field]}`
+    );
   }
 
   if (errors.length > 0) {
