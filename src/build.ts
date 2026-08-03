@@ -18,8 +18,8 @@ import {
 } from "./layout.ts";
 import { palette } from "./palette.ts";
 import {
+  canonicalPaletteSeed,
   hash32,
-  seedCode,
   seedPaletteIndex,
   seedSymbols,
   seedSlotCount
@@ -142,8 +142,8 @@ function correctionStars(
 }
 
 export async function buildIdenticon(value: IdenticonInput, assets: AssetSource): Promise<string> {
-  const code = seedCode(value.seed);
   const paletteIndex = seedPaletteIndex(value.seed);
+  const paletteSeed = canonicalPaletteSeed(paletteIndex);
   const colours = palette(value.seed);
 
   const backgroundSource = await assets.constellation(value.solar);
@@ -224,9 +224,9 @@ export async function buildIdenticon(value: IdenticonInput, assets: AssetSource)
   const data = escapeXml(JSON.stringify(value));
 
   return `<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="${canvas}" height="${canvas}" viewBox="0 0 ${canvas} ${canvas}" role="img" aria-label="${escapeXml(title)}" data-input="${data}" data-seed-code="${code}" data-palette-index="${paletteIndex}" data-code-version="4">
+<svg xmlns="http://www.w3.org/2000/svg" width="${canvas}" height="${canvas}" viewBox="0 0 ${canvas} ${canvas}" role="img" aria-label="${escapeXml(title)}" data-input="${data}" data-seed-code="${paletteSeed}" data-palette-index="${paletteIndex}" data-code-version="4">
   <title>${escapeXml(title)}</title>
-  <metadata>Generated deterministically by astrological-identicon. Palette seed ${paletteIndex}; star field is Hadamard palette error correction only.</metadata>
+  <metadata>Generated deterministically by astrological-identicon. Palette seed ${paletteSeed}; star field is Hadamard palette error correction only.</metadata>
   <defs>
     <clipPath id="inner-clip">
       <circle cx="${centre}" cy="${centre}" r="${innerClipRadius}"/>
