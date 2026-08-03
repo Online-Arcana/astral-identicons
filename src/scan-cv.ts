@@ -1,5 +1,3 @@
-import { outerRingRadius, ringStroke } from "./layout.ts";
-
 export interface Circle {
   x: number;
   y: number;
@@ -45,11 +43,16 @@ type CvApi = {
 
 declare global {
   interface Window {
-    cv?: CvApi | Promise<CvApi>;
+    cv?: CvApi | PromiseLike<CvApi>;
   }
 }
 
-const opencvUrl = "https://docs.opencv.org/4.10.0/opencv.js";
+export const opencvSources = [
+  "https://cdn.jsdelivr.net/npm/@techstark/opencv-js@4.10.0-release.1/dist/opencv.js",
+  "https://unpkg.com/@techstark/opencv-js@4.10.0-release.1/dist/opencv.js",
+  "https://docs.opencv.org/4.10.0/opencv.js"
+] as const;
+
 let cvRequest: Promise<CvApi> | undefined;
 
 function api(value: unknown): value is CvApi {
@@ -61,7 +64,7 @@ async function existingApi(): Promise<CvApi | undefined> {
   const value = window.cv;
   if (!value) return undefined;
 
-  const resolved = value instanceof Promise ? await value : value;
+  const resolved = await Promise.resolve(value);
   return api(resolved) ? resolved : undefined;
 }
 
@@ -91,38 +94,74 @@ function waitForApi(timeout = 30_000): Promise<CvApi> {
   });
 }
 
+function sourceScript(source: string): HTMLScriptElement | null {
+  return [...document.scripts].find((script) => {
+    return script.dataset.opencvSource === source;
+  }) ?? null;
+}
+
+async function loadSource(source: string): Promise<CvApi> {
+  const current = await existingApi();
+  if (current) return current;
+
+  const previous = sourceScript(source);
+  previous?.remove();
+  window.cv = undefined;
+
+  const script = document.createElement("script");
+  script.async = true;
+  script.src = source;
+  script.crossOrigin = "anonymous";
+  script.dataset.opencvSource = source;
+
+  const loaded = new Promise<void>((resolve, reject) => {
+    script.addEventListener("load", () => resolve(), { once: true });
+    script.addEventListener(
+      "error",
+      () => reject(new Error(`Could not load OpenCV.js from ${new URL(source).host}`)),
+      { once: true }
+    );
+  });
+
+  document.head.append(script);
+
+  try {
+    await loaded;
+    return await waitForApi();
+  } catch (error) {
+    script.remove();
+    window.cv = undefined;
+    throw error;
+  }
+}
+
+async function requestOpenCv(): Promise<CvApi> {
+  const current = await existingApi();
+  if (current) return current;
+
+  const failures: string[] = [];
+
+  for (const source of opencvSources) {
+    try {
+      return await loadSource(source);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      failures.push(message);
+    }
+  }
+
+  throw new Error(
+    `Could not load OpenCV.js from any configured CDN. ${failures.join(" ")}`
+  );
+}
+
 export function loadOpenCv(): Promise<CvApi> {
   if (cvRequest) return cvRequest;
 
-  cvRequest = (async () => {
-    const current = await existingApi();
-    if (current) return current;
-
-    const existing = document.querySelector<HTMLScriptElement>(
-      `script[data-opencv-source="${opencvUrl}"]`
-    );
-
-    if (!existing) {
-      const script = document.createElement("script");
-      script.async = true;
-      script.src = opencvUrl;
-      script.dataset.opencvSource = opencvUrl;
-
-      const loaded = new Promise<void>((resolve, reject) => {
-        script.addEventListener("load", () => resolve(), { once: true });
-        script.addEventListener(
-          "error",
-          () => reject(new Error("Could not load OpenCV.js")),
-          { once: true }
-        );
-      });
-
-      document.head.append(script);
-      await loaded;
-    }
-
-    return waitForApi();
-  })();
+  cvRequest = requestOpenCv().catch((error) => {
+    cvRequest = undefined;
+    throw error;
+  });
 
   return cvRequest;
 }
@@ -229,48 +268,6 @@ export function findOuterCircle(cv: CvApi, canvas: HTMLCanvasElement): Circle | 
   }
 }
 
-function backgroundFromAnnulus(canvas: HTMLCanvasElement): string {
-  const context = canvas.getContext("2d", { willReadFrequently: true });
-  if (!context) return "#000";
-
-  const image = context.getImageData(0, 0, canvas.width, canvas.height);
-  const centre = canvas.width / 2;
-  const scale = canvas.width / 1024;
-  const samples: Array<{ r: number; g: number; b: number; light: number }> = [];
-
-  for (let angle = 0; angle < 360; angle += 2) {
-    const radians = angle * Math.PI / 180;
-
-    for (const radius of [410, 416, 422]) {
-      const x = Math.round(centre + Math.cos(radians) * radius * scale);
-      const y = Math.round(centre + Math.sin(radians) * radius * scale);
-      const index = (y * image.width + x) * 4;
-      const red = image.data[index]!;
-      const green = image.data[index + 1]!;
-      const blue = image.data[index + 2]!;
-
-      samples.push({
-        r: red,
-        g: green,
-        b: blue,
-        light: red * 0.2126 + green * 0.7152 + blue * 0.0722
-      });
-    }
-  }
-
-  samples.sort((left, right) => left.light - right.light);
-  const selected = samples.slice(0, Math.max(12, Math.round(samples.length * 0.35)));
-  const total = selected.reduce((value, sample) => {
-    value.r += sample.r;
-    value.g += sample.g;
-    value.b += sample.b;
-    return value;
-  }, { r: 0, g: 0, b: 0 });
-
-  const count = Math.max(1, selected.length);
-  return `rgb(${Math.round(total.r / count)} ${Math.round(total.g / count)} ${Math.round(total.b / count)})`;
-}
-
 export function normaliseCircle(
   source: HTMLCanvasElement,
   circle: Circle,
@@ -283,19 +280,12 @@ export function normaliseCircle(
   target.width = size;
   target.height = size;
 
-  const temporary = document.createElement("canvas");
-  temporary.width = size;
-  temporary.height = size;
-  const temporaryContext = temporary.getContext("2d", { willReadFrequently: true });
-  if (!temporaryContext) throw new Error("Could not create a normalisation canvas");
-
-  const cropRadius = circle.radius * (size / 2) / outerRingRadius;
-  const sourceSize = cropRadius * 2;
-
-  temporaryContext.drawImage(
+  const sourceSize = circle.radius * 2;
+  context.clearRect(0, 0, size, size);
+  context.drawImage(
     source,
-    circle.x - cropRadius,
-    circle.y - cropRadius,
+    circle.x - circle.radius,
+    circle.y - circle.radius,
     sourceSize,
     sourceSize,
     0,
@@ -303,22 +293,4 @@ export function normaliseCircle(
     size,
     size
   );
-
-  const background = backgroundFromAnnulus(temporary);
-  context.clearRect(0, 0, size, size);
-  context.fillStyle = background;
-  context.fillRect(0, 0, size, size);
-
-  context.save();
-  context.beginPath();
-  context.arc(
-    size / 2,
-    size / 2,
-    (outerRingRadius + ringStroke) * size / 1024,
-    0,
-    Math.PI * 2
-  );
-  context.clip();
-  context.drawImage(temporary, 0, 0);
-  context.restore();
 }
