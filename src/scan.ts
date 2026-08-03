@@ -1,4 +1,4 @@
-import { captureVideo, findOuterCircle, loadOpenCv, normaliseCircle } from "./scan-cv.ts";
+import { captureVideo, findOuterCircle, loadOpenCv, normaliseCircle, type Circle } from "./scan-cv.ts";
 import {
   findOrientation,
   observePalette,
@@ -62,6 +62,15 @@ function imageData(canvas: HTMLCanvasElement): ImageData {
 
 function normalisedAngle(value: number): number {
   return ((value % 360) + 360) % 360;
+}
+
+function guideCircle(canvas: HTMLCanvasElement): Circle {
+  return {
+    x: canvas.width / 2,
+    y: canvas.height / 2,
+    radius: canvas.width * 0.44,
+    confidence: 0
+  };
 }
 
 async function orientationCandidates(
@@ -224,9 +233,11 @@ export class Scanner {
       const cv = await loadOpenCv();
       captureVideo(this.#video, this.#capture);
 
-      const circle = findOuterCircle(cv, this.#capture);
-      if (!circle) {
-        throw new Error("No complete identicon circle was found in the camera frame");
+      const detectedCircle = findOuterCircle(cv, this.#capture);
+      const circle = detectedCircle ?? guideCircle(this.#capture);
+
+      if (!detectedCircle) {
+        this.message("The outer circle was not detected automatically; using the camera guide alignment…");
       }
 
       normaliseCircle(this.#capture, circle, this.#normalised);
