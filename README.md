@@ -33,14 +33,13 @@ It does not calculate a natal chart or generate the source zodiac artwork.
 
 ## Web builder
 
-Requires [Bun](https://bun.sh/).
+Requires [Bun](https://bun.sh/) for local development.
 
 ```sh
-bun install
 bun run start
 ```
 
-Open `http://127.0.0.1:3000`.
+Open `http://127.0.0.1:4769`.
 
 For development with automatic reload:
 
@@ -51,10 +50,35 @@ bun run dev
 For LAN access:
 
 ```sh
-HOST=0.0.0.0 PORT=3000 bun run start
+HOST=0.0.0.0 PORT=4769 bun run start
 ```
 
 The browser preview and downloaded file both use the same `buildIdenticon()` renderer, so the preview is the exported SVG rather than a separate approximation.
+
+## GitHub Pages
+
+The public generator is deployed as a static site. Visitors do not need Bun and no server-side API is involved.
+
+To publish it:
+
+1. Make the repository public.
+2. Open **Settings → Pages**.
+3. Set **Source** to **GitHub Actions**.
+4. Run the **GitHub Pages** workflow or push to `main`.
+
+The site will be available at:
+
+```text
+https://kitty-crow.github.io/astral-identicons/
+```
+
+The static artifact can also be built locally:
+
+```sh
+bun run build:pages
+```
+
+This writes the deployable site to `dist/` with the browser bundle, copied vector assets and `.nojekyll` marker.
 
 ## CLI
 
@@ -114,12 +138,14 @@ The darkest source hue is transformed into a very dark background. The lightest 
 ## Project structure
 
 ```text
+.github/workflows/  GitHub Pages deployment
 assets/
   constellations/   constellation and artistic sign SVGs
   decor/            decorative vector assets
   sigils/           zodiac glyph SVGs
 examples/            generated example output
 public/              responsive web interface
+scripts/             static-site build tools
 src/
   build.ts           shared SVG renderer
   layout.ts          ring and inner-grid geometry
