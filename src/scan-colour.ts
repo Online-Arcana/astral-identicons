@@ -104,6 +104,21 @@ function colourCost(observed: Rgb, expected: Rgb): number {
   return chromaCost + lightCost;
 }
 
+function paletteCost(
+  background: Rgb,
+  layer0: Rgb,
+  layer1: Rgb,
+  index: number
+): number {
+  const value = paletteForIndex(index);
+
+  return (
+    colourCost(background, reducedRgb(value.background.reduced)) * 1.6 +
+    colourCost(layer0, reducedRgb(value.layer0.reduced)) +
+    colourCost(layer1, reducedRgb(value.layer1.reduced)) * 1.25
+  );
+}
+
 function cornerColour(image: ImageData): Rgb {
   const values: Rgb[] = [];
   const margin = Math.max(8, Math.round(image.width * 0.035));
@@ -239,11 +254,7 @@ export function matchPalette(
   let secondCost = Number.POSITIVE_INFINITY;
 
   for (let candidate = 0; candidate < 64; candidate += 1) {
-    const value = paletteForIndex(candidate);
-    const candidateCost =
-      colourCost(background, reducedRgb(value.background.reduced)) * 1.6 +
-      colourCost(layer0, reducedRgb(value.layer0.reduced)) +
-      colourCost(layer1, reducedRgb(value.layer1.reduced)) * 1.25;
+    const candidateCost = paletteCost(background, layer0, layer1, candidate);
 
     if (candidateCost < cost) {
       secondCost = cost;
@@ -256,6 +267,42 @@ export function matchPalette(
   }
 
   return { index, cost, secondCost };
+}
+
+export function swapPalette(value: ObservedPalette): ObservedPalette {
+  return {
+    ...value,
+    layer0: value.layer1,
+    layer1: value.layer0
+  };
+}
+
+export function alignPaletteToIndex(
+  value: ObservedPalette,
+  index: number
+): ObservedPalette {
+  const normalCost = paletteCost(
+    value.background,
+    value.layer0,
+    value.layer1,
+    index
+  );
+  const swappedCost = paletteCost(
+    value.background,
+    value.layer1,
+    value.layer0,
+    index
+  );
+  const swapped = swappedCost < normalCost;
+  const best = swapped ? swappedCost : normalCost;
+  const second = swapped ? normalCost : swappedCost;
+  const result = swapped ? swapPalette(value) : value;
+
+  return {
+    ...result,
+    index,
+    confidence: clamp((second - best) / Math.max(0.01, second), 0, 1)
+  };
 }
 
 export function observePalette(image: ImageData): ObservedPalette {
