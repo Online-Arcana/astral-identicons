@@ -127,12 +127,9 @@
       gap: 0.55rem;
     }
 
-    .actions {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-
+    .actions,
     .scan-actions {
-      grid-template-columns: repeat(3, minmax(0, 1fr));
+      grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 
     button {
@@ -416,7 +413,7 @@
           <div class="field">
             <label for="seed">Seed</label>
             <div class="seed">
-              <input id="seed" name="seed" value="6270f2-example-seed" autocomplete="off" required>
+              <input id="seed" name="seed" value="6270f2-example" autocomplete="off" required>
               <button id="random" class="secondary" type="button">New seed</button>
             </div>
           </div>
@@ -441,7 +438,7 @@
     <section class="scan-shell">
       <div class="scan-copy">
         <h2 id="scan-heading">Read an astral identicon</h2>
-        <p>The scanner runs locally in this page and does not download an external image-processing runtime. Use the camera or choose a saved photo.</p>
+        <p>The scanner runs locally in this page. It reads automatically once the complete identicon is stable inside the guide, or you can choose a saved photo.</p>
       </div>
 
       <div class="scan-stage">
@@ -449,7 +446,7 @@
         <div class="scan-guide" aria-hidden="true"></div>
       </div>
 
-      <canvas id="scan-capture" width="720" height="720" aria-hidden="true"></canvas>
+      <canvas id="scan-capture" width="1024" height="1024" aria-hidden="true"></canvas>
       <input id="scan-file" type="file" accept="image/*" aria-label="Choose an identicon photo">
 
       <div class="scan-result">
@@ -460,7 +457,6 @@
       <div class="scan-actions">
         <button id="scan-close" class="secondary" type="button">Close</button>
         <button id="scan-upload" class="secondary" type="button">Use photo</button>
-        <button id="scan-read" class="primary" type="button" disabled>Read frame</button>
       </div>
     </section>
   </dialog>

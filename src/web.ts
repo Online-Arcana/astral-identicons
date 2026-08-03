@@ -1,12 +1,15 @@
 import { buildIdenticon } from "./build.ts";
 import { palette } from "./palette.ts";
 import { Scanner } from "./scan.ts";
-import { seedCode } from "./seed.ts";
+import {
+  canonicalPaletteSeed,
+  seedPaletteIndex
+} from "./seed.ts";
 import { label, signs, type Sign } from "./sign.ts";
 import type { AssetSource, IdenticonInput } from "./types.ts";
 
 const defaults: IdenticonInput = {
-  seed: "6270f2-example-seed",
+  seed: "6270f2-example",
   solar: "capricorn",
   lunar: "virgo",
   ascendant: "capricorn",
@@ -202,8 +205,9 @@ async function render(): Promise<void> {
   showSvg(svg);
   showPalette(palette(data.seed));
 
+  const paletteIndex = seedPaletteIndex(data.seed);
   status.textContent =
-    `Visual seed ${seedCode(data.seed)}. Colours and coded stars can reproduce it.`;
+    `Palette seed ${canonicalPaletteSeed(paletteIndex)}. Colours suggest the palette; correction stars resolve camera ambiguity.`;
   status.className = "status";
 }
 
@@ -231,7 +235,7 @@ const scanner = new Scanner({
 
     void render().then(() => {
       status.textContent =
-        `Camera decoded ${result.seed} and all six signs with ${result.erasedBytes} corrected or uncertain byte${result.erasedBytes === 1 ? "" : "s"}.`;
+        `Camera recovered ${result.seed} and all six signs using the correction stars, with ${result.uncertainStars} uncertain star${result.uncertainStars === 1 ? "" : "s"}.`;
       status.className = "status";
     }).catch(showError);
   }
@@ -244,12 +248,8 @@ scan.addEventListener("click", () => {
 });
 
 randomButton.addEventListener("click", () => {
-  const bytes = crypto.getRandomValues(new Uint8Array(32));
-
-  const seed = [...bytes]
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("")
-    .toUpperCase();
+  const random = crypto.getRandomValues(new Uint8Array(1))[0]!;
+  const seed = canonicalPaletteSeed(random & 0x3f);
 
   form.querySelector<HTMLInputElement>("#seed")!.value = seed;
   schedule();
@@ -264,7 +264,7 @@ form.addEventListener("submit", async (event) => {
 
   try {
     const data = value();
-
+    const paletteSeed = canonicalPaletteSeed(seedPaletteIndex(data.seed));
     const svg = await buildIdenticon(data, browserAssets);
     latestSvg = svg;
 
@@ -276,7 +276,7 @@ form.addEventListener("submit", async (event) => {
     const link = document.createElement("a");
 
     link.href = url;
-    link.download = `astrological-identicon-${data.solar}-${seedCode(data.seed)}.svg`;
+    link.download = `astrological-identicon-${data.solar}-${paletteSeed}.svg`;
     link.click();
 
     window.setTimeout(() => {
@@ -284,7 +284,7 @@ form.addEventListener("submit", async (event) => {
     }, 0);
 
     status.textContent =
-      `Saved standalone SVG with visual seed ${seedCode(data.seed)}.`;
+      `Saved standalone SVG with recoverable palette seed ${paletteSeed}.`;
   } catch (error) {
     showError(error);
   } finally {
