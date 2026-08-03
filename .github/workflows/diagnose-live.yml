@@ -13,6 +13,9 @@ jobs:
   inspect:
     runs-on: ubuntu-latest
     steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
       - name: Inspect deployed HTML and JavaScript
         shell: bash
         run: |
@@ -68,3 +71,12 @@ jobs:
             echo 'The live site is still serving the old OpenCV-based scanner.' >&2
             exit 1
           fi
+
+      - name: Install browser diagnostics
+        shell: bash
+        run: |
+          npm install --no-save playwright@1.54.2
+          npx playwright install --with-deps chromium webkit
+
+      - name: Exercise deployed scanner in Chromium and WebKit
+        run: node scripts/diagnose-live.mjs
