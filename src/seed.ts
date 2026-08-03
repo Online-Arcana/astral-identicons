@@ -10,7 +10,7 @@ export interface SeedSymbol {
 }
 
 export const seedByteCount = 32;
-export const seedParityByteCount = 16;
+export const seedParityByteCount = 32;
 export const seedCodewordByteCount = seedByteCount + seedParityByteCount;
 export const seedNibbleCount = seedCodewordByteCount * 2;
 export const seedSlotCount = seedNibbleCount;
