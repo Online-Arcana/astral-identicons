@@ -1,24 +1,27 @@
 import { describe, expect, test } from "bun:test";
+import { innerRingRadius, outerRingRadius } from "../src/layout.ts";
 import {
   detectOuterCircle,
   type PixelFrame
 } from "../src/scan-cv.ts";
 
-function frame(
-  size: number,
-  centreX?: number,
-  centreY?: number,
-  radius?: number
-): PixelFrame {
+interface TestRing {
+  centreX: number;
+  centreY: number;
+  radius: number;
+}
+
+function frame(size: number, rings: readonly TestRing[] = []): PixelFrame {
   const data = new Uint8ClampedArray(size * size * 4);
 
   for (let y = 0; y < size; y += 1) {
     for (let x = 0; x < size; x += 1) {
       const index = (y * size + x) * 4;
-      const onRing = centreX !== undefined &&
-        centreY !== undefined &&
-        radius !== undefined &&
-        Math.abs(Math.hypot(x - centreX, y - centreY) - radius) <= 1.5;
+      const onRing = rings.some((ring) => {
+        return Math.abs(
+          Math.hypot(x - ring.centreX, y - ring.centreY) - ring.radius
+        ) <= 1.5;
+      });
 
       data[index] = onRing ? 238 : 10;
       data[index + 1] = onRing ? 174 : 10;
@@ -31,8 +34,15 @@ function frame(
 }
 
 describe("local outer-circle detector", () => {
-  test("recovers a bright circular ring", () => {
-    const result = detectOuterCircle(frame(192, 101, 91, 82));
+  test("selects the outer member of the identicon ring pair", () => {
+    const outer = 82;
+    const inner = outer * innerRingRadius / outerRingRadius;
+    const source = frame(192, [
+      { centreX: 101, centreY: 91, radius: outer },
+      { centreX: 101, centreY: 91, radius: inner }
+    ]);
+
+    const result = detectOuterCircle(source);
 
     expect(result === null).toBe(false);
     if (!result) throw new Error("expected a detected circle");
@@ -40,7 +50,16 @@ describe("local outer-circle detector", () => {
     expect(result.x >= 98 && result.x <= 104).toBe(true);
     expect(result.y >= 88 && result.y <= 94).toBe(true);
     expect(result.radius >= 79 && result.radius <= 85).toBe(true);
+    expect(result.radius > inner + 8).toBe(true);
     expect(result.confidence > 0.25).toBe(true);
+  });
+
+  test("does not mistake an isolated inner-sized ring for an outer ring", () => {
+    const result = detectOuterCircle(frame(192, [
+      { centreX: 96, centreY: 96, radius: 66 }
+    ]));
+
+    expect(result).toBe(null);
   });
 
   test("rejects a blank frame", () => {

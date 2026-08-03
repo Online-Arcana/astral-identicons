@@ -1,3 +1,5 @@
+import { innerRingRadius, outerRingRadius } from "./layout.ts";
+
 export interface Circle {
   x: number;
   y: number;
@@ -17,13 +19,20 @@ interface Rgb {
   b: number;
 }
 
+interface RingProfile {
+  average: number;
+  coverage: number;
+}
+
 interface Candidate extends Circle {
   score: number;
-  coverage: number;
+  outer: RingProfile;
+  inner: RingProfile;
 }
 
 const detectionSize = 224;
 const circleSamples = 112;
+const ringRatio = innerRingRadius / outerRingRadius;
 
 function clamp(value: number, minimum: number, maximum: number): number {
   return Math.max(minimum, Math.min(maximum, value));
@@ -101,13 +110,13 @@ function ringEvidence(
   return strongest;
 }
 
-function scoreCircle(
+function ringProfile(
   frame: PixelFrame,
   centreX: number,
   centreY: number,
-  radius: number
-): Candidate {
-  const delta = Math.max(2, Math.min(frame.width, frame.height) * 0.012);
+  radius: number,
+  delta: number
+): RingProfile {
   let total = 0;
   let covered = 0;
 
@@ -126,16 +135,45 @@ function scoreCircle(
     if (evidence >= 0.065) covered += 1;
   }
 
-  const coverage = covered / circleSamples;
-  const average = total / circleSamples;
-  const score = average * 0.82 + coverage * 0.18;
+  return {
+    average: total / circleSamples,
+    coverage: covered / circleSamples
+  };
+}
+
+function profileScore(profile: RingProfile): number {
+  return profile.average * 0.82 + profile.coverage * 0.18;
+}
+
+function scoreCircle(
+  frame: PixelFrame,
+  centreX: number,
+  centreY: number,
+  radius: number
+): Candidate {
+  const delta = Math.max(2, Math.min(frame.width, frame.height) * 0.012);
+  const outer = ringProfile(frame, centreX, centreY, radius, delta);
+  const inner = ringProfile(frame, centreX, centreY, radius * ringRatio, delta);
+  const radiusPreference = radius / Math.min(frame.width, frame.height);
+
+  /*
+   * The identicon contains two rings. Treating the first strong circle as the
+   * outer ring can select the inner ring and scale the entire code incorrectly.
+   * A valid outer-ring candidate must also contain the second ring at the
+   * canonical inner/outer radius ratio.
+   */
+  const score =
+    profileScore(outer) * 0.62 +
+    profileScore(inner) * 0.34 +
+    radiusPreference * 0.04;
 
   return {
     x: centreX,
     y: centreY,
     radius,
     score,
-    coverage,
+    outer,
+    inner,
     confidence: 0
   };
 }
@@ -224,12 +262,21 @@ export function detectOuterCircle(frame: PixelFrame): Circle | null {
   const refined = refine(frame, best, centreStep);
   const separation = Math.max(0, refined.score - (second?.score ?? 0));
   const confidence = clamp(
-    refined.score * 1.8 + separation * 4 + refined.coverage * 0.25,
+    refined.score * 1.55 +
+    separation * 4 +
+    refined.outer.coverage * 0.15 +
+    refined.inner.coverage * 0.2,
     0,
     1
   );
 
-  if (refined.score < 0.055 || refined.coverage < 0.2) return null;
+  if (
+    refined.score < 0.05 ||
+    refined.outer.coverage < 0.18 ||
+    refined.inner.coverage < 0.12
+  ) {
+    return null;
+  }
 
   return {
     x: refined.x,
