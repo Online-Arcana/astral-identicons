@@ -28,6 +28,7 @@ const layer0X = centre - layer0Radius;
 const layer0Y = centre - layer0Radius;
 const starCodeRadius = innerClipRadius - 54;
 const goldenAngle = Math.PI * (3 - Math.sqrt(5));
+const coreReferenceOpacity = 0.12;
 
 function nestedSvg(
   body: string,
@@ -202,7 +203,7 @@ export async function buildIdenticon(value: IdenticonInput, assets: AssetSource)
         placement.x,
         placement.y,
         placement.size,
-        `data-role="${escapeXml(placement.role)}" data-sign="${placement.sign}"`
+        `data-role="${escapeXml(placement.role)}" data-sign="${placement.sign}" data-orientation="upright"`
       );
     })
     .join("\n");
@@ -252,7 +253,13 @@ export async function buildIdenticon(value: IdenticonInput, assets: AssetSource)
     ${starLayer}
   </g>
 
-  <g id="foreground-layer-0" opacity="0.6" clip-path="url(#inner-clip)">
+  <g
+    id="foreground-layer-0"
+    data-recognition-role="orientation-reference"
+    data-orientation="upright"
+    opacity="0.6"
+    clip-path="url(#inner-clip)"
+  >
     ${nestedSvg(
       backgroundBody,
       backgroundAsset.viewBox,
@@ -260,11 +267,17 @@ export async function buildIdenticon(value: IdenticonInput, assets: AssetSource)
       layer0Y,
       layer0Size,
       layer0Size,
-      `data-sign="${value.solar}"`
+      `data-sign="${value.solar}" data-recognition-role="solar-constellation" data-orientation="upright"`
     )}
   </g>
 
-  <g id="foreground-layer-1-core" opacity="0.04" clip-path="url(#inner-clip)">
+  <g
+    id="foreground-layer-1-core"
+    data-recognition-role="upright-sign-reference"
+    data-orientation="upright"
+    opacity="${coreReferenceOpacity}"
+    clip-path="url(#inner-clip)"
+  >
     ${innerSigils}
   </g>
 
