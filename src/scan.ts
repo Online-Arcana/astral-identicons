@@ -2,9 +2,9 @@ import { captureVideo, findOuterCircle, loadOpenCv, normaliseCircle, type Circle
 import {
   findOrientation,
   observePalette,
-  readSeed,
   type ObservedPalette
 } from "./scan-colour.ts";
+import { readSeed } from "./scan-seed.ts";
 import {
   classifyConstellation,
   classifySigns,
