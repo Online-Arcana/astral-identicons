@@ -3,10 +3,15 @@ import { buildIdenticon } from "../src/build.ts";
 import {
   codeAnchorPoint,
   codeAnchors,
+  codeSectorCount,
   codeSlotPoint,
-  codeSymbolPoint
+  codeSymbolPoint,
+  codeSymbolSpacing,
+  codeTrackCount,
+  innerClipRadius
 } from "../src/code-layout.ts";
 import { input } from "../src/input.ts";
+import { centre } from "../src/layout.ts";
 import {
   palette,
   paletteForIndex,
@@ -18,8 +23,10 @@ import {
   decodeSeedNibbles,
   encodedSeedNibbles,
   seedCode,
+  seedCodewordByteCount,
   seedNibbleSlot,
   seedPaletteIndex,
+  seedParityByteCount,
   seedSlotCount
 } from "../src/seed.ts";
 import type { AssetSource } from "../src/types.ts";
@@ -73,7 +80,7 @@ describe("visual seed", () => {
     expect(keys.size).toBe(64);
   });
 
-  test("recovers sixteen erased Reed-Solomon bytes", () => {
+  test("recovers thirty-two erased Reed-Solomon bytes", () => {
     const valuePalette = palette(sample.seed);
     const paletteIndex = paletteIndexFromReduced(
       valuePalette.background.reduced,
@@ -83,8 +90,8 @@ describe("visual seed", () => {
 
     const slots: Array<number | null> = [...encodedSeedNibbles(sample.seed)];
 
-    for (let index = 0; index < 16; index += 1) {
-      const byte = (index * 7) % 48;
+    for (let index = 0; index < seedParityByteCount; index += 1) {
+      const byte = (index * 7) % seedCodewordByteCount;
       slots[seedNibbleSlot(byte * 2)] = null;
       slots[seedNibbleSlot(byte * 2 + 1)] = null;
     }
@@ -99,7 +106,9 @@ describe("visual seed", () => {
       confidence: 1
     }));
 
-    for (const byte of [3, 11, 22, 37]) {
+    const conflicting = [3, 7, 11, 15, 19, 23, 27, 31, 36, 41, 48, 57];
+
+    for (const byte of conflicting) {
       const slot = seedNibbleSlot(byte * 2);
       observations[slot] = {
         value: (observations[slot]!.value + 5) % 16,
@@ -113,12 +122,12 @@ describe("visual seed", () => {
     );
 
     expect(recovered.seed).toBe(seedCode(sample.seed));
-    expect(recovered.erasures).toBe(4);
+    expect(recovered.erasures).toBe(conflicting.length);
   });
 });
 
 describe("visual scanner geometry", () => {
-  test("uses the same 96 deterministic slots as the renderer", () => {
+  test("uses 128 deterministic slots across four polar tracks", () => {
     const points = new Set<string>();
 
     for (let slot = 0; slot < seedSlotCount; slot += 1) {
@@ -126,18 +135,43 @@ describe("visual scanner geometry", () => {
       points.add(`${point.x.toFixed(6)}:${point.y.toFixed(6)}`);
     }
 
+    expect(seedSlotCount).toBe(128);
+    expect(codeTrackCount).toBe(4);
+    expect(codeSectorCount).toBe(32);
     expect(points.size).toBe(seedSlotCount);
   });
 
-  test("maps all sixteen symbols to distinct offsets", () => {
-    const points = new Set<string>();
+  test("maps all sixteen symbols to camera-separated offsets", () => {
+    const points = Array.from({ length: 16 }, (_unused, value) => {
+      return codeSymbolPoint(0, value);
+    });
+    const keys = new Set(points.map((point) => `${point.x}:${point.y}`));
+    let minimum = Number.POSITIVE_INFINITY;
 
-    for (let value = 0; value < 16; value += 1) {
-      const point = codeSymbolPoint(0, value);
-      points.add(`${point.x}:${point.y}`);
+    for (let left = 0; left < points.length; left += 1) {
+      for (let right = left + 1; right < points.length; right += 1) {
+        minimum = Math.min(
+          minimum,
+          Math.hypot(
+            points[left]!.x - points[right]!.x,
+            points[left]!.y - points[right]!.y
+          )
+        );
+      }
     }
 
-    expect(points.size).toBe(16);
+    expect(keys.size).toBe(16);
+    expect(Math.abs(minimum - codeSymbolSpacing) < 0.000001).toBe(true);
+  });
+
+  test("keeps every code position inside the inner clipping circle", () => {
+    for (let slot = 0; slot < seedSlotCount; slot += 1) {
+      for (let value = 0; value < 16; value += 1) {
+        const point = codeSymbolPoint(slot, value);
+        const radius = Math.hypot(point.x - centre, point.y - centre);
+        expect(radius < innerClipRadius - 7).toBe(true);
+      }
+    }
   });
 
   test("uses asymmetric registration anchors", () => {
@@ -189,15 +223,19 @@ describe("builder", () => {
     expect(first).toBe(second);
     expect(first).toContain('viewBox="0 0 1024 1024"');
     expect(first).toContain(`data-seed-code="${seedCode(sample.seed)}"`);
-    expect(first).toContain('data-code-version="2"');
-    expect(first).toContain('data-code="reed-solomon-48-32-v2"');
-    expect(first).toContain('data-code-slots="96"');
+    expect(first).toContain('data-code-version="3"');
+    expect(first).toContain('data-code="reed-solomon-64-32-v3"');
+    expect(first).toContain('data-code-slots="128"');
+    expect(first).toContain('data-code-tracks="4"');
+    expect(first).toContain('data-code-sectors="32"');
     expect(first).toContain('data-code-parity="true"');
     expect(first).toContain('id="registration-stars"');
     expect(first).toContain('id="coded-stars"');
     expect(first).toContain('data-code-colour="layer1"');
-    expect(first).toContain('data-code-symbol-size="6"');
-    expect(first).toContain('opacity="0.92"');
+    expect(first).toContain('data-code-symbol-size="10"');
+    expect(first).toContain('data-code-symbol-spacing="10"');
+    expect(first).toContain('data-code-halo-radius="7"');
+    expect(first).toContain('opacity="1"');
     expect(first).toContain('id="foreground-layer-0"');
     expect(first).toContain('id="foreground-layer-1-core"');
     expect(first).toContain('data-recognition-role="upright-sign-reference"');

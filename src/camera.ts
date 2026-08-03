@@ -101,7 +101,10 @@ export function requestCamera(
   const request = devices.getUserMedia({
     audio: false,
     video: {
-      facingMode: { ideal: "environment" }
+      facingMode: { ideal: "environment" },
+      width: { ideal: 1920 },
+      height: { ideal: 1080 },
+      frameRate: { ideal: 30 }
     }
   });
 

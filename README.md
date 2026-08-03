@@ -12,11 +12,19 @@ Each identicon is both a repeatable visual mark and a structured visual record. 
 
 - **Inner interpretation:** the Solar sign selects the large upright constellation and artistic sign illustration. A fixed 3 × 3 grid places upright references for the Sun, Moon, Ascendant, Midheaven, Descendant and Imum Coeli.
 - **Astrological ring:** twelve equally spaced glyphs sit between two concentric circles. Solar glyphs occupy the cardinal points, Lunar glyphs occupy the alternating points, and the four chart angles fill the remaining positions.
-- **Visual seed:** the three-colour palette redundantly identifies six seed bits. The star field stores a 48-byte Reed-Solomon codeword containing the 32-byte seed and 16 parity bytes.
+- **Visual seed:** the three-colour palette redundantly identifies six seed bits. The star field stores a 64-byte Reed-Solomon codeword containing the 32-byte seed and 32 parity bytes.
 
 The upright inner references disambiguate ring glyphs after their radial rotation. The asymmetric registration stars use the constellation colour to establish an initial angle, while the non-symmetrical upright constellation independently confirms orientation and identifies the Solar sign.
 
-The remaining 96 stars are arranged in known cells. Each star's offset within its cell represents one hexadecimal nibble, so two stars represent one codeword byte. Visual-code version 2 renders these code stars as small, fixed-size, high-contrast markers in the second foreground colour above the interpretation artwork. That keeps neighbouring nibble positions distinct and prevents the constellation from obscuring the code.
+The remaining 128 stars are arranged over four staggered polar tracks. Each star's offset within its local 4 × 4 cell represents one hexadecimal nibble, so two stars represent one codeword byte.
+
+Visual-code version 3 is designed for camera capture rather than perfect source pixels:
+
+- code markers are 10 SVG units rather than 6;
+- candidate positions are separated by 10 SVG units;
+- every code marker has a background-coloured isolation halo;
+- markers are distributed over fixed polar tracks instead of a crowded golden-angle field;
+- the Reed-Solomon parity budget is doubled from 16 to 32 bytes.
 
 ## Seed model
 
@@ -34,14 +42,14 @@ A recogniser recovers the canonical visual seed, not arbitrary source text that 
 recognised palette
     → 6-bit seed check
 
-96 sampled star offsets
-    → 48 Reed-Solomon bytes
+128 sampled star offsets
+    → 64 Reed-Solomon bytes
 
 Reed-Solomon recovery and palette verification
     → complete 256-bit visual seed
 ```
 
-The decoder can reconstruct up to 16 known erased bytes, such as cells marked uncertain or obscured by the image processor.
+The decoder can reconstruct up to 32 known erased bytes, such as cells marked uncertain or obscured by the image processor. Low-confidence but apparently readable bytes are progressively converted into erasures until the complete codeword and palette agree.
 
 ## Camera scanner
 
@@ -52,7 +60,7 @@ The public frontend includes an in-page camera scanner. It does not open a separ
 3. Hold the image flat and evenly lit.
 4. Select **Read frame** when using the live camera.
 
-The scanner then:
+The scanner requests a high-resolution rear-camera stream when the browser supports it, then performs:
 
 ```text
 paired outer-circle detection
@@ -67,7 +75,7 @@ upright constellation templates
 fixed inner sigils + unrotated ring comparisons
     → six chart signs
 
-96 high-contrast star samples + Reed-Solomon recovery
+128 isolated star samples + Reed-Solomon recovery
     → canonical visual seed
 ```
 
@@ -179,7 +187,7 @@ public/              responsive web interface
 scripts/             static-site build tools
 src/
   build.ts           shared SVG renderer
-  camera.ts          bounded camera and video startup
+  camera.ts          bounded high-resolution camera startup
   code-layout.ts     shared star and registration geometry
   layout.ts          ring and inner-grid geometry
   palette.ts         64-entry visual palette codebook
@@ -187,7 +195,7 @@ src/
   scan.ts            camera and photo scanner orchestration
   scan-colour.ts     palette and orientation recovery
   scan-cv.ts         local paired-ring detection and normalisation
-  scan-seed.ts       high-contrast star decoding
+  scan-seed.ts       isolated polar-star decoding
   scan-sign.ts       constellation and glyph classification
   seed.ts            visual seed and star-symbol mapping
   cli.ts             command-line interface
