@@ -16,7 +16,7 @@ function nameOf(error: unknown): string {
 
 function messageOf(error: unknown): string {
   if (!error || typeof error !== "object") return String(error);
-  if (!("message" in error)) return String(error.message);
+  if (!("message" in error)) return String(error);
   return String(error.message);
 }
 
