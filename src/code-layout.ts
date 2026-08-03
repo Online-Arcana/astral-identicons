@@ -22,7 +22,7 @@ export const codeTrackCount = paletteCorrectionTrackCount;
 export const codeSectorCount = paletteCorrectionSectorCount;
 export const codeBitOffset = 12;
 export const codeBitSeparation = codeBitOffset * 2;
-export const codeTrackRadii = [190, 245, 300, 350] as const;
+export const codeTrackRadii = [175, 230, 285, 340] as const;
 
 if (codeTrackRadii.length !== codeTrackCount) {
   throw new Error("correction track geometry does not match the palette code");
