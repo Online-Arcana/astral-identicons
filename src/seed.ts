@@ -1,21 +1,14 @@
-import { rsEncode, rsRecoverErasures, rsValid } from "./rs.ts";
-
 export interface SeedSymbol {
-  byte: number;
-  half: "high" | "low";
-  nibble: number;
   slot: number;
-  value: number;
-  parity: boolean;
+  track: number;
+  sector: number;
+  bit: 0 | 1;
 }
 
-export const seedByteCount = 32;
-export const seedParityByteCount = 32;
-export const seedCodewordByteCount = seedByteCount + seedParityByteCount;
-export const seedNibbleCount = seedCodewordByteCount * 2;
-export const seedSlotCount = seedNibbleCount;
-
-const slotStride = 17;
+export const paletteCount = 64;
+export const paletteCorrectionTrackCount = 4;
+export const paletteCorrectionSectorCount = 32;
+export const seedSlotCount = paletteCorrectionTrackCount * paletteCorrectionSectorCount;
 
 export function hash32(value: string): number {
   let result = 0x811c9dc5;
@@ -48,15 +41,38 @@ function derivedSeed(value: string): string {
   return parts.join("").toUpperCase();
 }
 
+function explicitPaletteIndex(value: string): number | undefined {
+  const match = /^palette-([0-9a-f]{2})$/i.exec(value);
+  if (!match) return undefined;
+
+  const index = Number.parseInt(match[1]!, 16);
+  return index < paletteCount ? index : undefined;
+}
+
+export function canonicalPaletteSeed(index: number): string {
+  if (!Number.isInteger(index) || index < 0 || index >= paletteCount) {
+    throw new Error(`palette index must be between 0 and ${paletteCount - 1}`);
+  }
+
+  return `palette-${index.toString(16).padStart(2, "0").toUpperCase()}`;
+}
+
 export function seedCode(seed: string): string {
   const value = seed.trim();
+  const explicit = explicitPaletteIndex(value);
+
+  if (explicit !== undefined) {
+    const first = (explicit << 2).toString(16).padStart(2, "0");
+    return `${first}${"0".repeat(62)}`.toUpperCase();
+  }
+
   if (/^[0-9a-f]{64}$/i.test(value)) return value.toUpperCase();
   return derivedSeed(value);
 }
 
 export function seedBytes(seed: string): Uint8Array {
   const code = seedCode(seed);
-  const result = new Uint8Array(seedByteCount);
+  const result = new Uint8Array(32);
 
   for (let index = 0; index < result.length; index += 1) {
     result[index] = Number.parseInt(code.slice(index * 2, index * 2 + 2), 16);
@@ -66,110 +82,58 @@ export function seedBytes(seed: string): Uint8Array {
 }
 
 export function seedPaletteIndex(seed: string): number {
+  const explicit = explicitPaletteIndex(seed.trim());
+  if (explicit !== undefined) return explicit;
   return seedBytes(seed)[0]! >>> 2;
 }
 
-export function seedCodeword(seed: string): Uint8Array {
-  return rsEncode(seedBytes(seed), seedParityByteCount);
+function parity(value: number): 0 | 1 {
+  let bits = value >>> 0;
+  bits ^= bits >>> 16;
+  bits ^= bits >>> 8;
+  bits ^= bits >>> 4;
+  bits &= 0x0f;
+  return ((0x6996 >>> bits) & 1) as 0 | 1;
 }
 
-export function seedNibbleSlot(nibble: number): number {
-  if (!Number.isInteger(nibble) || nibble < 0 || nibble >= seedNibbleCount) {
-    throw new Error(`seed nibble must be between 0 and ${seedNibbleCount - 1}`);
+function correctionMask(track: number, sector: number): 0 | 1 {
+  const first = sector >>> (track % 5);
+  const second = sector >>> ((track + 2) % 5);
+  return ((first ^ second ^ track) & 1) as 0 | 1;
+}
+
+export function paletteCorrectionBit(index: number, slot: number): 0 | 1 {
+  if (!Number.isInteger(index) || index < 0 || index >= paletteCount) {
+    throw new Error(`palette index must be between 0 and ${paletteCount - 1}`);
   }
 
-  return (nibble * slotStride) % seedSlotCount;
+  if (!Number.isInteger(slot) || slot < 0 || slot >= seedSlotCount) {
+    throw new Error(`correction slot must be between 0 and ${seedSlotCount - 1}`);
+  }
+
+  const track = Math.floor(slot / paletteCorrectionSectorCount);
+  const sector = slot % paletteCorrectionSectorCount;
+  const constant = (index >>> 5) & 1;
+  const coefficients = index & 0x1f;
+  const hadamard = constant ^ parity(coefficients & sector);
+
+  return (hadamard ^ correctionMask(track, sector)) as 0 | 1;
+}
+
+export function paletteCorrectionBits(index: number): readonly (0 | 1)[] {
+  return Array.from(
+    { length: seedSlotCount },
+    (_unused, slot) => paletteCorrectionBit(index, slot)
+  );
 }
 
 export function seedSymbols(seed: string): readonly SeedSymbol[] {
-  const codeword = seedCodeword(seed);
-  const result: SeedSymbol[] = [];
+  const index = seedPaletteIndex(seed);
 
-  for (let byte = 0; byte < codeword.length; byte += 1) {
-    const value = codeword[byte]!;
-
-    for (let halfIndex = 0; halfIndex < 2; halfIndex += 1) {
-      const half = halfIndex === 0 ? "high" : "low";
-      const nibble = byte * 2 + halfIndex;
-      const nibbleValue = halfIndex === 0 ? value >>> 4 : value & 0x0f;
-
-      result.push({
-        byte,
-        half,
-        nibble,
-        slot: seedNibbleSlot(nibble),
-        value: nibbleValue,
-        parity: byte >= seedByteCount
-      });
-    }
-  }
-
-  return result.sort((left, right) => left.slot - right.slot);
-}
-
-export function encodedSeedNibbles(seed: string): readonly number[] {
-  const slots = Array<number>(seedSlotCount).fill(0);
-
-  for (const symbol of seedSymbols(seed)) {
-    slots[symbol.slot] = symbol.value;
-  }
-
-  return slots;
-}
-
-function bytesToCode(bytes: Uint8Array): string {
-  return [...bytes]
-    .map((value) => value.toString(16).padStart(2, "0"))
-    .join("")
-    .toUpperCase();
-}
-
-export function decodeSeedNibbles(
-  slots: readonly (number | null)[],
-  paletteIndex: number
-): string {
-  if (slots.length !== seedSlotCount) {
-    throw new Error(`seed slot sample must contain exactly ${seedSlotCount} values`);
-  }
-
-  if (!Number.isInteger(paletteIndex) || paletteIndex < 0 || paletteIndex >= 64) {
-    throw new Error("palette index must be between 0 and 63");
-  }
-
-  const codeword = new Uint8Array(seedCodewordByteCount);
-  const erasures: number[] = [];
-
-  for (let byte = 0; byte < seedCodewordByteCount; byte += 1) {
-    const high = slots[seedNibbleSlot(byte * 2)];
-    const low = slots[seedNibbleSlot(byte * 2 + 1)];
-
-    if (high === null || low === null) {
-      erasures.push(byte);
-      continue;
-    }
-
-    if (
-      !Number.isInteger(high) || high < 0 || high > 15 ||
-      !Number.isInteger(low) || low < 0 || low > 15
-    ) {
-      throw new Error("seed star samples must contain hexadecimal nibbles or null");
-    }
-
-    codeword[byte] = (high << 4) | low;
-  }
-
-  const recovered = erasures.length === 0
-    ? codeword
-    : rsRecoverErasures(codeword, seedParityByteCount, erasures);
-
-  if (!rsValid(recovered, seedParityByteCount)) {
-    throw new Error("seed star codeword failed Reed-Solomon validation");
-  }
-
-  const seed = recovered.slice(0, seedByteCount);
-  if ((seed[0]! >>> 2) !== paletteIndex) {
-    throw new Error("palette does not match the decoded visual seed");
-  }
-
-  return bytesToCode(seed);
+  return paletteCorrectionBits(index).map((bit, slot) => ({
+    slot,
+    track: Math.floor(slot / paletteCorrectionSectorCount),
+    sector: slot % paletteCorrectionSectorCount,
+    bit
+  }));
 }
