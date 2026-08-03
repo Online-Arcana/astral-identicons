@@ -7,6 +7,7 @@ import {
 import {
   canvas,
   centre,
+  innerRingRadius,
   outerRingRadius,
   placements,
   ringPlacements,
