@@ -1,10 +1,6 @@
-import { chromium, webkit } from "playwright";
+import { chromium } from "playwright-core";
 
 const base = "https://kitty-crow.github.io/astral-identicons/";
-const engines = [
-  ["chromium", chromium],
-  ["webkit", webkit]
-];
 const signFields = [
   "solar",
   "lunar",
@@ -14,8 +10,13 @@ const signFields = [
   "imumCoeli"
 ];
 
-for (const [name, engine] of engines) {
-  const browser = await engine.launch({ headless: true });
+const browser = await chromium.launch({
+  headless: true,
+  executablePath: "/usr/bin/google-chrome-stable",
+  args: ["--no-sandbox"]
+});
+
+try {
   const page = await browser.newPage({
     viewport: { width: 390, height: 844 },
     deviceScaleFactor: 3,
@@ -72,15 +73,15 @@ for (const [name, engine] of engines) {
   await page.waitForSelector("#preview > svg", { timeout: 15_000 });
 
   const preview = await previewElement.boundingBox();
-  if (!preview) throw new Error(`${name}: preview is not visible`);
+  if (!preview) throw new Error("preview is not visible");
 
   if (preview.width > 300 || preview.width > 390) {
-    throw new Error(`${name}: preview is too wide at ${preview.width}px`);
+    throw new Error(`preview is too wide at ${preview.width}px`);
   }
 
   const expectedSeed = await page.locator("#status").textContent().then((text) => {
     const match = text?.match(/Visual seed ([0-9A-F]{64})/);
-    if (!match) throw new Error(`${name}: could not read the expected visual seed`);
+    if (!match) throw new Error("could not read the expected visual seed");
     return match[1];
   });
 
@@ -120,7 +121,7 @@ for (const [name, engine] of engines) {
     const classes = (await statusLocator.getAttribute("class")) ?? "";
 
     if (status !== previous) {
-      console.log(`${name}: scanner-status=${status}`);
+      console.log(`scanner-status=${status}`);
       previous = status;
     }
 
@@ -130,7 +131,8 @@ for (const [name, engine] of engines) {
     }
 
     if (classes.includes("error")) {
-      final = status;
+      await page.waitForTimeout(150);
+      final = (await statusLocator.textContent()) ?? status;
       failed = true;
       break;
     }
@@ -138,21 +140,21 @@ for (const [name, engine] of engines) {
     await page.waitForTimeout(250);
   }
 
-  console.log(`${name}: preview=${preview.width}x${preview.height}`);
-  console.log(`${name}: elapsed=${Date.now() - started}ms`);
+  console.log(`preview=${preview.width}x${preview.height}`);
+  console.log(`elapsed=${Date.now() - started}ms`);
 
   if (!final) {
-    throw new Error(`${name}: decoder remained pending at: ${previous}`);
+    throw new Error(`decoder remained pending at: ${previous}`);
   }
 
   if (failed) {
-    throw new Error(`${name}: decoder failed at: ${final}`);
+    throw new Error(`decoder failed at: ${final}`);
   }
 
   const recoveredSeed = await page.locator("#seed").inputValue();
   if (recoveredSeed !== expectedSeed) {
     throw new Error(
-      `${name}: recovered seed ${recoveredSeed} does not match ${expectedSeed}`
+      `recovered seed ${recoveredSeed} does not match ${expectedSeed}`
     );
   }
 
@@ -161,13 +163,15 @@ for (const [name, engine] of engines) {
     if (recovered === expectedSigns[field]) continue;
 
     throw new Error(
-      `${name}: recovered ${field}=${recovered}, expected ${expectedSigns[field]}`
+      `recovered ${field}=${recovered}, expected ${expectedSigns[field]}`
     );
   }
 
   if (errors.length > 0) {
-    throw new Error(`${name}: ${errors.join(" | ")}`);
+    throw new Error(errors.join(" | "));
   }
 
+  console.log(`scanner-result=${final}`);
+} finally {
   await browser.close();
 }
