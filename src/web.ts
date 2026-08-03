@@ -1,5 +1,6 @@
 import { buildIdenticon } from "./build.ts";
 import { palette } from "./palette.ts";
+import { seedCode } from "./seed.ts";
 import { label, signs, type Sign } from "./sign.ts";
 import type { AssetSource, IdenticonInput } from "./types.ts";
 
@@ -184,7 +185,7 @@ async function render(): Promise<void> {
   showPalette(palette(data.seed));
 
   status.textContent =
-    "The preview and saved file use the same SVG builder.";
+    `Visual seed ${seedCode(data.seed)}. Colours and coded stars can reproduce it.`;
   status.className = "status";
 }
 
@@ -209,11 +210,12 @@ function schedule(): void {
 form.addEventListener("input", schedule);
 
 randomButton.addEventListener("click", () => {
-  const bytes = crypto.getRandomValues(new Uint8Array(20));
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
 
   const seed = [...bytes]
     .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
+    .join("")
+    .toUpperCase();
 
   form.querySelector<HTMLInputElement>("#seed")!.value = seed;
   schedule();
@@ -229,10 +231,6 @@ form.addEventListener("submit", async (event) => {
   try {
     const data = value();
 
-    /*
-     * Usually the current preview is already up to date. Rebuilding here
-     * protects against submission occurring during the debounce interval.
-     */
     const svg = await buildIdenticon(data, browserAssets);
     latestSvg = svg;
 
@@ -244,7 +242,7 @@ form.addEventListener("submit", async (event) => {
     const link = document.createElement("a");
 
     link.href = url;
-    link.download = `astrological-identicon-${data.solar}.svg`;
+    link.download = `astrological-identicon-${data.solar}-${seedCode(data.seed)}.svg`;
     link.click();
 
     window.setTimeout(() => {
@@ -252,7 +250,7 @@ form.addEventListener("submit", async (event) => {
     }, 0);
 
     status.textContent =
-      "Standalone SVG saved from the same builder used by the preview.";
+      `Saved standalone SVG with visual seed ${seedCode(data.seed)}.`;
   } catch (error) {
     showError(error);
   } finally {

@@ -1,8 +1,8 @@
 # Astral Identicons
 
-Deterministic astrological SVG identicons built from a seed and six chart signs.
+Deterministic astrological SVG identicons built from one visual seed and six resolved chart signs.
 
-Each identicon translates a compact astrological profile into a repeatable visual mark. The same inputs and source assets always produce the same standalone SVG.
+Each identicon is both a repeatable visual mark and a structured visual record. The constellation and glyph arrangement identify the astrological components. The palette and coded star field preserve the complete visual seed for a later image interpreter.
 
 <p align="center">
   <img src="./examples/capricorn.svg" alt="Example Capricorn astral identicon" width="420">
@@ -10,13 +10,38 @@ Each identicon translates a compact astrological profile into a repeatable visua
 
 ## Visual grammar
 
-The composition has three layers:
-
 - **Inner interpretation:** the Solar sign selects the large constellation and artistic sign illustration. A faint 3 × 3 sigil grid places the Sun, Moon, Ascendant, Midheaven, Descendant and Imum Coeli inside the inner circle.
 - **Astrological ring:** twelve equally spaced glyphs sit between two concentric circles. Solar glyphs occupy the cardinal points, Lunar glyphs occupy the alternating points, and the four chart angles fill the remaining positions.
-- **Seeded atmosphere:** the seed selects the reduced analogous palette and the deterministic star field contained within the inner circle.
+- **Visual seed:** the three-colour palette redundantly identifies six seed bits. The star field stores a 48-byte Reed-Solomon codeword containing the 32-byte seed and 16 parity bytes.
 
-Ring glyphs rotate towards the centre. The Solar illustration is clipped to the inner field, while the faded internal sigils remain subordinate to the constellation artwork.
+Three fixed registration stars provide orientation. The remaining 96 stars are arranged in known cells. Each star's offset within its cell represents one hexadecimal nibble, so two stars represent one codeword byte.
+
+## Seed model
+
+The recoverable visual seed is a 256-bit value written as 64 hexadecimal digits:
+
+```text
+0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF
+```
+
+A 64-digit hexadecimal input is preserved exactly. Other non-empty strings remain accepted and are deterministically reduced to a 256-bit visual seed. The web builder generates canonical 256-bit seeds by default.
+
+A recogniser can therefore recover the canonical visual seed, not arbitrary source text that was reduced into one.
+
+```text
+recognised palette
+    → 6-bit seed check
+
+96 sampled star offsets
+    → 48 Reed-Solomon bytes
+
+Reed-Solomon recovery and palette verification
+    → complete 256-bit visual seed
+```
+
+The current decoder can recover up to 16 known erased bytes, such as cells the image recogniser marks as obscured or uncertain. A later camera interpreter can add unknown-error correction and image classification without changing the SVG format.
+
+The six chart signs are read independently from the constellation and glyph arrangement.
 
 ## Scope
 
@@ -29,7 +54,7 @@ This project is a visual interpreter and SVG compositor. It expects already reso
 - Descendant
 - Imum Coeli
 
-It does not calculate a natal chart or generate the source zodiac artwork.
+It does not calculate a natal chart, generate the source zodiac artwork, or currently perform camera recognition.
 
 ## Web builder
 
@@ -41,7 +66,7 @@ bun run start
 
 Open `http://127.0.0.1:4769`.
 
-For development with automatic reload:
+For automatic reload:
 
 ```sh
 bun run dev
@@ -53,38 +78,32 @@ For LAN access:
 HOST=0.0.0.0 PORT=4769 bun run start
 ```
 
-The browser preview and downloaded file both use the same `buildIdenticon()` renderer, so the preview is the exported SVG rather than a separate approximation.
+The browser preview and downloaded file use the same `buildIdenticon()` renderer.
 
 ## GitHub Pages
 
-The public generator is deployed as a static site. Visitors do not need Bun and no server-side API is involved.
-
-To publish it:
+The public generator is deployed as a static site. Visitors do not need Bun or a server-side API.
 
 1. Make the repository public.
 2. Open **Settings → Pages**.
 3. Set **Source** to **GitHub Actions**.
 4. Run the **GitHub Pages** workflow or push to `main`.
 
-The site will be available at:
-
 ```text
 https://kitty-crow.github.io/astral-identicons/
 ```
 
-The static artifact can also be built locally:
+Build the same static artifact locally with:
 
 ```sh
 bun run build:pages
 ```
 
-This writes the deployable site to `dist/` with the browser bundle, copied vector assets and `.nojekyll` marker.
-
 ## CLI
 
 ```sh
 bun run identicon -- \
-  --seed 6270f2-example-seed \
+  --seed 0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF \
   --solar capricorn \
   --lunar virgo \
   --ascendant capricorn \
@@ -97,18 +116,6 @@ bun run identicon -- \
 Without `--out`, the generated SVG is written to standard output.
 
 JSON input is also supported:
-
-```json
-{
-  "seed": "6270f2-example-seed",
-  "solar": "capricorn",
-  "lunar": "virgo",
-  "ascendant": "capricorn",
-  "midheaven": "libra",
-  "descendant": "cancer",
-  "imumCoeli": "aries"
-}
-```
 
 ```sh
 bun run identicon -- --json input.example.json --out identicon.svg
@@ -125,15 +132,8 @@ Every generated identicon is:
 - composed entirely from vector elements;
 - restricted to three reduced `#RGB` colours;
 - free of raster images and external asset references;
-- labelled with accessible SVG metadata.
-
-The seed controls the visual palette and decorative star field. The six signs control the semantic composition.
-
-## Palette
-
-The seed selects three analogous hues at `H − 60°`, `H`, and `H + 60°`.
-
-The darkest source hue is transformed into a very dark background. The lightest remaining colour becomes foreground 0 for the constellation and stars, while the final colour becomes foreground 1 for the sigils and ring. All three are quantised to reduced `#RGB` values.
+- labelled with accessible and machine-readable SVG metadata;
+- equipped with a recoverable 256-bit visual seed.
 
 ## Project structure
 
@@ -141,7 +141,7 @@ The darkest source hue is transformed into a very dark background. The lightest 
 .github/workflows/  GitHub Pages deployment
 assets/
   constellations/   constellation and artistic sign SVGs
-  decor/            decorative vector assets
+  decor/            star vector
   sigils/           zodiac glyph SVGs
 examples/            generated example output
 public/              responsive web interface
@@ -149,12 +149,14 @@ scripts/             static-site build tools
 src/
   build.ts           shared SVG renderer
   layout.ts          ring and inner-grid geometry
-  palette.ts         deterministic colour selection
+  palette.ts         64-entry visual palette codebook
+  rs.ts              Reed-Solomon encoding and erasure recovery
+  seed.ts            visual seed and star-symbol mapping
   cli.ts             command-line interface
   server.ts          Bun web server
   web.ts             browser controls and preview
   xml.ts             SVG parsing and rewriting
-tests/                deterministic core tests
+tests/                deterministic and recovery tests
 ```
 
 ## Checks

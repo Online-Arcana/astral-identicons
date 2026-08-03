@@ -1,3 +1,4 @@
+import { seedPaletteIndex } from "./seed.ts";
 import type { Palette, PaletteColour } from "./types.ts";
 
 interface Rgb {
@@ -6,22 +7,16 @@ interface Rgb {
   b: number;
 }
 
-function hash(value: string): number {
-  let result = 0x811c9dc5;
-
-  for (let index = 0; index < value.length; index += 1) {
-    result ^= value.charCodeAt(index);
-    result = Math.imul(result, 0x01000193);
-  }
-
-  result ^= result >>> 16;
-  result = Math.imul(result, 0x85ebca6b);
-  result ^= result >>> 13;
-  result = Math.imul(result, 0xc2b2ae35);
-  result ^= result >>> 16;
-
-  return result >>> 0;
-}
+const paletteHues = [
+  0, 6, 13, 19, 23, 27, 38, 41,
+  48, 49, 55, 56, 66, 72, 73, 80,
+  83, 94, 101, 108, 113, 126, 128, 133,
+  139, 143, 147, 154, 161, 162, 169, 173,
+  176, 185, 188, 192, 199, 200, 203, 214,
+  218, 222, 228, 235, 246, 253, 260, 267,
+  274, 282, 288, 289, 295, 296, 306, 308,
+  313, 319, 323, 327, 338, 341, 348, 353
+] as const;
 
 function hue(value: number): number {
   return ((value % 360) + 360) % 360;
@@ -42,7 +37,7 @@ function hsl(h: number, saturation: number, lightness: number): Rgb {
   else if (section < 3) [green, blue] = [c, x];
   else if (section < 4) [green, blue] = [x, c];
   else if (section < 5) [red, blue] = [x, c];
-  else[red, blue] = [c, x];
+  else [red, blue] = [c, x];
 
   return {
     r: Math.round((red + m) * 255),
@@ -106,11 +101,6 @@ function backgroundColour(sourceHue: number): PaletteColour {
   let lightness = 0.28;
   let result = colour(backgroundHue, saturation, lightness);
 
-  /*
-   * colour() calculates luminance after conversion to reduced #RGB.
-   * This means the final exported colour, rather than the temporary
-   * full-length colour, is guaranteed to be sufficiently dark.
-   */
   while (
     result.luminance > maximumLuminance &&
     lightness > minimumLightness
@@ -122,8 +112,7 @@ function backgroundColour(sourceHue: number): PaletteColour {
   return result;
 }
 
-export function palette(seed: string): Palette {
-  const centreHue = hash(seed) % 360;
+function paletteFromHue(centreHue: number): Palette {
   const hues = [centreHue - 60, centreHue, centreHue + 60] as const;
   const source = hues.map((value) => colour(value, 0.85, 0.67)) as [
     PaletteColour,
@@ -147,4 +136,43 @@ export function palette(seed: string): Palette {
     layer1: foregrounds[1]!,
     source
   };
+}
+
+function paletteKey(value: Palette): string {
+  return [
+    value.background.reduced,
+    value.layer0.reduced,
+    value.layer1.reduced
+  ].join("|");
+}
+
+const codebook = paletteHues.map((value) => paletteFromHue(value));
+const paletteIndices = new Map(
+  codebook.map((value, index) => [paletteKey(value), index])
+);
+
+if (paletteIndices.size !== paletteHues.length) {
+  throw new Error("visual palette codebook must contain 64 unique palettes");
+}
+
+export function paletteForIndex(index: number): Palette {
+  if (!Number.isInteger(index) || index < 0 || index >= codebook.length) {
+    throw new Error("palette index must be between 0 and 63");
+  }
+
+  return codebook[index]!;
+}
+
+export function paletteIndexFromReduced(
+  background: string,
+  layer0: string,
+  layer1: string
+): number {
+  const index = paletteIndices.get([background, layer0, layer1].join("|"));
+  if (index === undefined) throw new Error("colours are not a visual seed palette");
+  return index;
+}
+
+export function palette(seed: string): Palette {
+  return paletteForIndex(seedPaletteIndex(seed));
 }
