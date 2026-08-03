@@ -18,8 +18,8 @@ import {
   type ObservedPalette
 } from "./scan-colour.ts";
 import {
-  readPaletteCorrection,
-  type PaletteCorrectionReading
+  readSeed,
+  type SeedReading
 } from "./scan-seed.ts";
 import {
   classifyConstellation,
@@ -27,14 +27,18 @@ import {
   type SignReading,
   type SignResult
 } from "./scan-sign.ts";
-import { canonicalPaletteSeed } from "./seed.ts";
+import {
+  seedPaletteIndex,
+  seedParityByteCount
+} from "./seed.ts";
 import type { IdenticonInput } from "./types.ts";
 
 export interface ScanResult extends IdenticonInput {
   paletteIndex: number;
   orientation: number;
   uncertainStars: number;
-  correctionMismatches: number;
+  correctedBytes: number;
+  visualSignMismatches: number;
   signs: SignReading;
 }
 
@@ -42,17 +46,19 @@ interface ScannerOptions {
   apply(result: ScanResult): void;
 }
 
-interface OrientedFrame {
+interface EvaluatedFrame {
   canvas: HTMLCanvasElement;
   data: ImageData;
   angle: number;
   constellation: SignResult;
   palette: ObservedPalette;
+  seed: SeedReading | undefined;
+  score: number;
 }
 
 const automaticInterval = 260;
 const retryInterval = 520;
-const stableFrameCount = 2;
+const stableFrameCount = 3;
 
 function required<T extends Element>(selector: string): T {
   const value = document.querySelector<T>(selector);
@@ -155,44 +161,100 @@ function captureImage(
   );
 }
 
+function frameScore(
+  constellation: SignResult,
+  palette: ObservedPalette,
+  seed: SeedReading | undefined
+): number {
+  if (!seed) return constellation.score;
+
+  let score = 8 + seed.confidence * 2;
+  score -= seed.erasures / Math.max(1, seedParityByteCount);
+
+  if (seed.value.solar === constellation.sign) {
+    score += 2 + Math.min(1, constellation.confidence * 12);
+  }
+
+  if (seedPaletteIndex(seed.value.seed) === palette.index) {
+    score += Math.max(0, palette.confidence);
+  }
+
+  return score;
+}
+
+async function evaluateFrame(
+  source: HTMLCanvasElement,
+  palette: ObservedPalette,
+  angle: number
+): Promise<EvaluatedFrame> {
+  const canvas = rotated(source, angle);
+  const data = imageData(canvas);
+  const constellation = await classifyConstellation(data, palette);
+  let seed: SeedReading | undefined;
+
+  try {
+    seed = readSeed(data, palette);
+  } catch {
+    seed = undefined;
+  }
+
+  return {
+    canvas,
+    data,
+    angle,
+    constellation,
+    palette,
+    seed,
+    score: frameScore(constellation, palette, seed)
+  };
+}
+
+function better(
+  current: EvaluatedFrame | undefined,
+  candidate: EvaluatedFrame
+): EvaluatedFrame {
+  if (!current) return candidate;
+  if (Boolean(candidate.seed) !== Boolean(current.seed)) {
+    return candidate.seed ? candidate : current;
+  }
+  return candidate.score > current.score ? candidate : current;
+}
+
 async function orientationCandidates(
   source: HTMLCanvasElement,
   palette: ObservedPalette,
   anchorAngle: number
-): Promise<OrientedFrame> {
-  const coarse = [0, 90, 180, 270].map((offset) => {
+): Promise<EvaluatedFrame> {
+  const coarseAngles = [0, 90, 180, 270].map((offset) => {
     return normalisedAngle(anchorAngle + offset);
   });
+  const coarse: EvaluatedFrame[] = [];
+  let best: EvaluatedFrame | undefined;
 
-  let best: OrientedFrame | undefined;
+  for (const angle of coarseAngles) {
+    const candidate = await evaluateFrame(source, palette, angle);
+    coarse.push(candidate);
+    best = better(best, candidate);
+  }
 
-  for (const angle of coarse) {
-    const canvas = rotated(source, angle);
-    const data = imageData(canvas);
-    const constellation = await classifyConstellation(data, palette);
+  const valid = coarse
+    .filter((candidate) => candidate.seed)
+    .sort((left, right) => right.score - left.score);
+  const bases = valid.length > 0
+    ? valid.slice(0, 1)
+    : [...coarse]
+      .sort((left, right) => right.constellation.score - left.constellation.score)
+      .slice(0, 2);
 
-    if (!best || constellation.score > best.constellation.score) {
-      best = { canvas, data, angle, constellation, palette };
+  for (const base of bases) {
+    for (const offset of [-4, -2, -1, 1, 2, 4]) {
+      const angle = normalisedAngle(base.angle + offset);
+      const candidate = await evaluateFrame(source, palette, angle);
+      best = better(best, candidate);
     }
   }
 
   if (!best) throw new Error("Could not determine identicon orientation");
-
-  const refined = [-4, -2, -1, 0, 1, 2, 4].map((offset) => {
-    return normalisedAngle(best!.angle + offset);
-  });
-
-  for (const angle of refined) {
-    if (angle === best.angle) continue;
-
-    const canvas = rotated(source, angle);
-    const data = imageData(canvas);
-    const constellation = await classifyConstellation(data, palette);
-
-    if (constellation.score <= best.constellation.score) continue;
-    best = { canvas, data, angle, constellation, palette };
-  }
-
   return best;
 }
 
@@ -200,55 +262,48 @@ async function bestOrientation(
   source: HTMLCanvasElement,
   rawData: ImageData,
   observed: ObservedPalette
-): Promise<OrientedFrame> {
+): Promise<EvaluatedFrame> {
   const palettes = [observed, swapPalette(observed)];
-  let best: OrientedFrame | undefined;
+  let best: EvaluatedFrame | undefined;
 
   for (const palette of palettes) {
     const anchor = findOrientation(rawData, palette);
     const candidate = await orientationCandidates(source, palette, anchor.angle);
-
-    if (!best || candidate.constellation.score > best.constellation.score) {
-      best = candidate;
-    }
+    best = better(best, candidate);
   }
 
-  if (!best) throw new Error("Could not orient the identicon");
+  if (!best?.seed) {
+    throw new Error("The exact seed and sign payload is not stable yet");
+  }
+
   return best;
 }
 
-function confidenceWarning(signs: SignReading): string | undefined {
-  const values = [
-    signs.solar,
-    signs.lunar,
-    signs.ascendant,
-    signs.midheaven,
-    signs.descendant,
-    signs.imumCoeli
-  ];
+function visualSignMismatches(
+  signs: SignReading,
+  value: IdenticonInput
+): number {
+  const roles = [
+    "solar",
+    "lunar",
+    "ascendant",
+    "midheaven",
+    "descendant",
+    "imumCoeli"
+  ] as const;
 
-  const uncertain = values.filter((value) => value.confidence < 0.025).length;
-  if (uncertain === 0) return undefined;
-  return `${uncertain} sign${uncertain === 1 ? " is" : "s are"} low-confidence`;
-}
-
-function resultText(result: ScanResult): string {
-  const warning = confidenceWarning(result.signs);
-  const details = [
-    `Palette seed ${result.seed}`,
-    `${result.uncertainStars} uncertain correction star${result.uncertainStars === 1 ? "" : "s"}`,
-    `${result.correctionMismatches} corrected mismatch${result.correctionMismatches === 1 ? "" : "es"}`,
-    warning
-  ].filter(Boolean);
-
-  return details.join(" · ");
+  return roles.filter((role) => signs[role].sign !== value[role]).length;
 }
 
 function softFailure(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
 
-  if (message.includes("correction")) {
-    return "Identicon found. Resolving the palette correction stars…";
+  if (
+    message.includes("payload") ||
+    message.includes("Reed-Solomon") ||
+    message.includes("star")
+  ) {
+    return "Identicon found. Reconstructing the exact seed and signs from the correction stars…";
   }
 
   if (message.includes("orientation") || message.includes("orient")) {
@@ -426,12 +481,11 @@ export class Scanner {
       }
 
       this.#decoding = true;
-      this.message("Identicon recognised. Resolving palette correction and signs…");
+      this.message("Identicon recognised. Recovering its exact fields…");
 
       const result = await this.decodeCircle(circle);
       this.#options.apply(result);
-      this.stop();
-      this.message(resultText(result), false);
+      this.close();
     } catch (error) {
       this.message(softFailure(error));
       this.scheduleAutomatic(retryInterval);
@@ -455,8 +509,7 @@ export class Scanner {
       const result = await this.decodeCircle(circle);
 
       this.#options.apply(result);
-      this.stop();
-      this.message(resultText(result), false);
+      this.close();
     } finally {
       this.#upload.disabled = false;
     }
@@ -472,6 +525,7 @@ export class Scanner {
       rawData,
       observed
     );
+    const reading = oriented.seed!;
 
     const normalisedContext = context(this.#normalised);
     normalisedContext.clearRect(
@@ -482,28 +536,20 @@ export class Scanner {
     );
     normalisedContext.drawImage(oriented.canvas, 0, 0);
 
-    const correction: PaletteCorrectionReading = readPaletteCorrection(
-      oriented.data,
-      oriented.palette
-    );
     const signs = await classifySigns(
       oriented.data,
       oriented.palette,
       oriented.constellation
     );
+    const value = reading.value;
 
     return {
-      seed: canonicalPaletteSeed(correction.index),
-      solar: signs.solar.sign,
-      lunar: signs.lunar.sign,
-      ascendant: signs.ascendant.sign,
-      midheaven: signs.midheaven.sign,
-      descendant: signs.descendant.sign,
-      imumCoeli: signs.imumCoeli.sign,
-      paletteIndex: correction.index,
+      ...value,
+      paletteIndex: seedPaletteIndex(value.seed),
       orientation: oriented.angle,
-      uncertainStars: correction.uncertainStars,
-      correctionMismatches: correction.mismatches,
+      uncertainStars: reading.uncertainStars,
+      correctedBytes: reading.erasures,
+      visualSignMismatches: visualSignMismatches(signs, value),
       signs
     };
   }
