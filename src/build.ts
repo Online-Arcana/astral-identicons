@@ -1,9 +1,9 @@
 import {
   codeAnchorPoint,
   codeAnchors,
-  codeBitSeparation,
   codeSectorCount,
   codeSymbolPoint,
+  codeSymbolSpacing,
   codeTrackCount,
   innerClipRadius
 } from "./code-layout.ts";
@@ -18,9 +18,10 @@ import {
 } from "./layout.ts";
 import { palette } from "./palette.ts";
 import {
-  canonicalPaletteSeed,
   hash32,
+  seedDataByteCount,
   seedPaletteIndex,
+  seedParityByteCount,
   seedSymbols,
   seedSlotCount
 } from "./seed.ts";
@@ -34,8 +35,8 @@ const layer0Size = layer0Radius * 2;
 const layer0X = centre - layer0Radius;
 const layer0Y = centre - layer0Radius;
 const coreReferenceOpacity = 0.12;
-const codeStarSize = 12;
-const codeStarHaloRadius = 8;
+const codeStarSize = 10;
+const codeStarHaloRadius = 7;
 const codeStarOpacity = 1;
 
 function nestedSvg(
@@ -104,27 +105,28 @@ function registrationStars(
     .join("\n");
 }
 
-function correctionStars(
-  seed: string,
+function codedStars(
+  value: IdenticonInput,
   asset: ReturnType<typeof parseSvg>,
   colour: string,
   background: string
 ): string {
   const result: string[] = [];
 
-  for (const symbol of seedSymbols(seed)) {
-    const { x, y } = codeSymbolPoint(symbol.slot, symbol.bit);
-    const style = hash32(`astrological-identicon/palette-correction/v4:${symbol.slot}`);
+  for (const symbol of seedSymbols(value)) {
+    const { x, y } = codeSymbolPoint(symbol.slot, symbol.value);
+    const style = hash32(`astrological-identicon/complete-payload/v5:${symbol.slot}`);
     const rotation = (style >>> 16) % 360;
     const body = starBody(asset, colour, `star-${symbol.slot}`);
-    const halo = `<circle cx="${x}" cy="${y}" r="${codeStarHaloRadius}" fill="${background}" opacity="0.94"/>`;
+    const halo = `<circle cx="${x}" cy="${y}" r="${codeStarHaloRadius}" fill="${background}" opacity="0.92"/>`;
 
     result.push(
       `<g
         data-code-slot="${symbol.slot}"
-        data-code-track="${symbol.track}"
-        data-code-sector="${symbol.sector}"
-        data-code-bit="${symbol.bit}"
+        data-code-byte="${symbol.byte}"
+        data-code-nibble="${symbol.half}"
+        data-code-value="${symbol.value.toString(16).toUpperCase()}"
+        data-code-parity="${symbol.parity}"
         opacity="${codeStarOpacity}"
       >${halo}${placedSvg(
         body,
@@ -143,7 +145,6 @@ function correctionStars(
 
 export async function buildIdenticon(value: IdenticonInput, assets: AssetSource): Promise<string> {
   const paletteIndex = seedPaletteIndex(value.seed);
-  const paletteSeed = canonicalPaletteSeed(paletteIndex);
   const colours = palette(value.seed);
 
   const backgroundSource = await assets.constellation(value.solar);
@@ -156,8 +157,8 @@ export async function buildIdenticon(value: IdenticonInput, assets: AssetSource)
   const starSource = await assets.star();
   const starAsset = parseSvg(starSource);
   const anchorLayer = registrationStars(starAsset, colours.layer0.reduced);
-  const correctionLayer = correctionStars(
-    value.seed,
+  const codeLayer = codedStars(
+    value,
     starAsset,
     colours.layer1.reduced,
     colours.background.reduced
@@ -224,9 +225,9 @@ export async function buildIdenticon(value: IdenticonInput, assets: AssetSource)
   const data = escapeXml(JSON.stringify(value));
 
   return `<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="${canvas}" height="${canvas}" viewBox="0 0 ${canvas} ${canvas}" role="img" aria-label="${escapeXml(title)}" data-input="${data}" data-seed-code="${paletteSeed}" data-palette-index="${paletteIndex}" data-code-version="4">
+<svg xmlns="http://www.w3.org/2000/svg" width="${canvas}" height="${canvas}" viewBox="0 0 ${canvas} ${canvas}" role="img" aria-label="${escapeXml(title)}" data-input="${data}" data-palette-index="${paletteIndex}" data-code-version="5">
   <title>${escapeXml(title)}</title>
-  <metadata>Generated deterministically by astrological-identicon. Palette seed ${paletteSeed}; star field is Hadamard palette error correction only.</metadata>
+  <metadata>Generated deterministically by astrological-identicon. The exact UTF-8 seed and all six chart signs are stored in the Reed-Solomon-protected star field.</metadata>
   <defs>
     <clipPath id="inner-clip">
       <circle cx="${centre}" cy="${centre}" r="${innerClipRadius}"/>
@@ -273,18 +274,20 @@ export async function buildIdenticon(value: IdenticonInput, assets: AssetSource)
 
   <g
     id="coded-stars"
-    data-code="hadamard-32x4-palette-v4"
-    data-code-role="palette-error-correction"
+    data-code="reed-solomon-64-40-identicon-v5"
+    data-code-role="complete-identicon-payload"
     data-code-slots="${seedSlotCount}"
+    data-code-data-bytes="${seedDataByteCount}"
+    data-code-parity-bytes="${seedParityByteCount}"
     data-code-tracks="${codeTrackCount}"
     data-code-sectors="${codeSectorCount}"
     data-code-colour="layer1"
     data-code-symbol-size="${codeStarSize}"
-    data-code-symbol-separation="${codeBitSeparation}"
+    data-code-symbol-spacing="${codeSymbolSpacing}"
     data-code-halo-radius="${codeStarHaloRadius}"
     clip-path="url(#inner-clip)"
   >
-    ${correctionLayer}
+    ${codeLayer}
   </g>
 
   <g id="ring-system">
