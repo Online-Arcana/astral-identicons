@@ -96,6 +96,7 @@ function northStarLayer(
     data-reference-position="top"
     data-reference-size="${northStar.size}"
     data-reference-opacity="${northStar.opacity}"
+    data-code-colour="layer0"
     opacity="${northStar.opacity}"
   >
     <circle
@@ -183,7 +184,7 @@ export async function buildIdenticon(
   );
   const northLayer = northStarLayer(
     starAsset,
-    colours.layer1.reduced,
+    colours.layer0.reduced,
     colours.background.reduced
   );
 
@@ -300,6 +301,13 @@ export async function buildIdenticon(
     clip-path="url(#inner-clip)"
   >
     ${recoveryLayer}
+  </g>
+
+  <g
+    id="north-star-reference"
+    data-recognition-role="orientation-size-opacity-reference"
+    clip-path="url(#inner-clip)"
+  >
     ${northLayer}
   </g>
 
