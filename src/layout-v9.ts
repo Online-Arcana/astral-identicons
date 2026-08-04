@@ -13,8 +13,9 @@ import {
 } from "./layout.ts";
 import {
   planetAnchorCount,
+  planetAnchorGroup,
   planetAnchorGroupCount,
-  planetAnchorPositionCount,
+  planetAnchorGroupSize,
   planetDensityLevelCount,
   planetSizeLevelCount,
   satellitePositionCount
@@ -55,7 +56,7 @@ const innerGap = 8;
 const goldenAngle = Math.PI * (3 - Math.sqrt(5));
 export const v9InnerClipRadius = innerRingRadius - ringStroke / 2 - innerGap;
 
-export const planetMacroSpacing = 112;
+export const planetMacroSpacing = 100;
 export const planetMicroSpacing = 8;
 export const planetGlyphSizes = [26, 30, 34, 38, 42, 46] as const;
 export const planetDensityStrokeWidths = [0, 0, 0, 0, 0, 0] as const;
@@ -122,56 +123,73 @@ export function calibrationStar(index: number): CalibrationStar {
 
 function planetGroups(): readonly Point[] {
   const rowSpacing = planetMacroSpacing * Math.sqrt(3) / 2;
-  const values: Array<Point & { readonly radius: number; readonly angle: number }> = [];
+  const inner: Array<Point & { readonly radius: number; readonly angle: number }> = [];
+  const outer: Array<Point & { readonly radius: number; readonly angle: number }> = [];
 
   for (let row = -4; row <= 4; row += 1) {
     const y = row * rowSpacing;
     const offset = Math.abs(row) % 2 === 0 ? 0 : planetMacroSpacing / 2;
-
     for (let column = -4; column <= 4; column += 1) {
       const x = column * planetMacroSpacing + offset;
       const radius = Math.hypot(x, y);
-      if (radius < 100 || radius > 224.000001) continue;
-      values.push({
+      if (radius < 90 || radius > 265.000001) continue;
+      const value = {
         x: centre + x,
         y: centre + y,
         radius,
         angle: Math.atan2(y, x)
-      });
+      };
+      if (radius <= 200.000001) inner.push(value);
+      else outer.push(value);
     }
   }
 
-  values.sort((left, right) => {
+  outer.sort((left, right) => left.angle - right.angle);
+  const selected = [
+    ...inner,
+    ...outer.filter((_value, index) => index % 2 === 0)
+  ];
+  selected.sort((left, right) => {
     const radius = left.radius - right.radius;
     return radius === 0 ? left.angle - right.angle : radius;
   });
-  if (values.length !== planetAnchorGroupCount) {
-    throw new Error("v9 must expose exactly eighteen separated planet groups");
+  if (selected.length !== planetAnchorGroupCount) {
+    throw new Error("v9 must expose exactly twenty-four separated planet groups");
   }
-  return values.map(({ x, y }) => ({ x, y }));
+  return selected.map(({ x, y }) => ({ x, y }));
 }
 
-function microOffsets(): readonly Point[] {
-  const values: Point[] = [];
-  for (let row = 0; row < 4; row += 1) {
-    for (let column = 0; column < 4; column += 1) {
-      values.push({
-        x: (column - 1.5) * planetMicroSpacing,
-        y: (row - 1.5) * planetMicroSpacing
-      });
-    }
+const microCandidates = [
+  { x: -12, y: -8 }, { x: -4, y: -8 }, { x: 4, y: -8 }, { x: 12, y: -8 },
+  { x: -12, y: 0 }, { x: -4, y: 0 }, { x: 4, y: 0 }, { x: 12, y: 0 },
+  { x: -12, y: 8 }, { x: -4, y: 8 }, { x: 4, y: 8 }, { x: 12, y: 8 }
+] as const;
+
+function microOffsets(group: number): readonly Point[] {
+  const size = planetAnchorGroupSize(group);
+  const omitted = size === 11
+    ? new Set([group % 4 * 4 + (group % 2 === 0 ? 0 : 3)])
+    : new Set(group % 2 === 0 ? [0, 11] : [3, 8]);
+  const values = microCandidates.filter((_point, index) => !omitted.has(index));
+  if (values.length !== size) {
+    throw new Error("v9 planetary micro-anchor selection is inconsistent");
   }
   return values;
 }
 
 export const planetGroupCentres = planetGroups();
-export const planetMicroOffsets = microOffsets();
+export const planetGroupMicroOffsets = Array.from(
+  { length: planetAnchorGroupCount },
+  (_unused, group) => microOffsets(group)
+);
 export const maximumPlanetMicroOffset = Math.max(
-  ...planetMicroOffsets.map((point) => Math.hypot(point.x, point.y))
+  ...planetGroupMicroOffsets.flatMap((offsets) => {
+    return offsets.map((point) => Math.hypot(point.x, point.y));
+  })
 );
 
-export const planetAnchorPoints = planetGroupCentres.flatMap((group) => {
-  return planetMicroOffsets.map((offset) => ({
+export const planetAnchorPoints = planetGroupCentres.flatMap((group, index) => {
+  return planetGroupMicroOffsets[index]!.map((offset) => ({
     x: group.x + offset.x,
     y: group.y + offset.y
   }));
@@ -184,10 +202,9 @@ export const planetAnchorOuterRadius = Math.max(
 function crossGroupMinimum(): number {
   let minimum = Number.POSITIVE_INFINITY;
   for (let left = 0; left < planetAnchorPoints.length; left += 1) {
-    const leftGroup = Math.floor(left / planetAnchorPositionCount);
+    const leftGroup = planetAnchorGroup(left);
     for (let right = left + 1; right < planetAnchorPoints.length; right += 1) {
-      const rightGroup = Math.floor(right / planetAnchorPositionCount);
-      if (leftGroup === rightGroup) continue;
+      if (leftGroup === planetAnchorGroup(right)) continue;
       minimum = Math.min(
         minimum,
         distance(planetAnchorPoints[left]!, planetAnchorPoints[right]!)
@@ -201,7 +218,7 @@ export const minimumPlanetAnchorSeparation = crossGroupMinimum();
 export const minimumPlanetEnvelopeGap =
   minimumPlanetAnchorSeparation - maximumPlanetEnvelope * 2;
 
-const encodedFieldGapTarget = 6;
+const encodedFieldGapTarget = 4;
 export const encodedFieldGap = encodedFieldGapTarget;
 const planetExclusionRadius =
   maximumPlanetMicroOffset +
@@ -209,7 +226,7 @@ const planetExclusionRadius =
   maximumParityEnvelope +
   encodedFieldGapTarget;
 const parityMinimumRadius =
-  centralSun.rayOuterRadius + maximumParityEnvelope + encodedFieldGapTarget;
+  centralSun.rayOuterRadius + maximumParityEnvelope + 6;
 const parityMaximumRadius = v9InnerClipRadius - maximumParityEnvelope;
 
 function parityCandidates(): readonly CandidatePoint[] {
@@ -221,12 +238,10 @@ function parityCandidates(): readonly CandidatePoint[] {
   for (let source = 0; source < count; source += 1) {
     const fraction = (source + 0.5) / count;
     const radius = Math.sqrt(minimumSquared + spanSquared * fraction);
-    const angle = source * goldenAngle;
-    const point = polar(angle, radius);
-    const clearsPlanetGroups = planetGroupCentres.every((group) => {
-      return distance(point, group) >= planetExclusionRadius;
-    });
-    if (!clearsPlanetGroups) continue;
+    const point = polar(source * goldenAngle, radius);
+    if (planetGroupCentres.some((group) => {
+      return distance(point, group) < planetExclusionRadius;
+    })) continue;
     values.push({ ...point, source });
   }
   return values;
@@ -252,10 +267,11 @@ function blueNoiseParityGroups(): readonly Point[] {
 
   let first = 0;
   for (let index = 1; index < candidates.length; index += 1) {
-    const candidate = candidates[index]!;
-    const selected = candidates[first]!;
-    const difference = boundaryClearance(candidate) - boundaryClearance(selected);
-    if (difference > 0 || (difference === 0 && candidate.source < selected.source)) {
+    const difference =
+      boundaryClearance(candidates[index]!) -
+      boundaryClearance(candidates[first]!);
+    if (difference > 0) first = index;
+    if (difference === 0 && candidates[index]!.source < candidates[first]!.source) {
       first = index;
     }
   }
@@ -306,10 +322,7 @@ function parityMinimumSeparation(): number {
 export const minimumParityGroupSeparation = parityMinimumSeparation();
 
 if (planetAnchorPoints.length !== planetAnchorCount) {
-  throw new Error("v9 planetary field must contain exactly 288 anchors");
-}
-if (planetMicroOffsets.length !== planetAnchorPositionCount) {
-  throw new Error("v9 planetary groups must contain sixteen micro-anchors");
+  throw new Error("v9 planetary field must contain exactly 256 anchors");
 }
 if (planetGlyphSizes.length !== planetSizeLevelCount) {
   throw new Error("v9 planetary size geometry is inconsistent");
@@ -337,7 +350,7 @@ for (let level = 0; level < planetGlyphSizes.length; level += 1) {
     throw new Error("v9 planetary glyph sizes must be exactly twice star sizes");
   }
 }
-if (minimumPlanetEnvelopeGap < 30) {
+if (minimumPlanetEnvelopeGap < 18) {
   throw new Error("v9 planetary groups are not visually separated enough");
 }
 if (minimumParityGroupSeparation <= maximumParityEnvelope * 2 + 2) {
