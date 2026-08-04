@@ -1,6 +1,7 @@
 import {
   rsEncode,
-  rsRecoverErrorsAndErasures
+  rsRecoverErrorsAndErasures,
+  type ReedSolomonRecovery
 } from "./rs.ts";
 import {
   decodeSeedCodeword,
@@ -32,6 +33,17 @@ export interface RecoveredStarRecord {
   readonly reconstructedStars: number;
   readonly discardedStars: number;
   readonly confidence: number;
+}
+
+interface RankedObservation {
+  readonly index: number;
+  readonly confidence: number;
+}
+
+interface RecoveryCandidate {
+  readonly recovery: ReedSolomonRecovery;
+  readonly ignored: readonly number[];
+  readonly value: IdenticonInput;
 }
 
 export const starParityDataByteCount = seedDataByteCount;
@@ -110,6 +122,57 @@ function decodePayload(payload: Uint8Array): IdenticonInput {
   return decodeSeedCodeword(canonicalCodeword);
 }
 
+function recoverCandidate(
+  damaged: Uint8Array,
+  baseErasures: readonly number[],
+  ignored: readonly number[]
+): RecoveryCandidate {
+  const attempt = damaged.slice();
+  const erasures = [...baseErasures, ...ignored];
+
+  for (const position of erasures) attempt[position] = 0;
+
+  const recovery = rsRecoverErrorsAndErasures(
+    attempt,
+    starParityExpansionByteCount,
+    erasures
+  );
+  const bytes = recovery.codeword.slice(0, starParityDataByteCount);
+
+  return {
+    recovery,
+    ignored,
+    value: decodePayload(bytes)
+  };
+}
+
+function generalisedMinimumDistanceRecovery(
+  damaged: Uint8Array,
+  baseErasures: readonly number[],
+  ranked: readonly RankedObservation[]
+): RecoveryCandidate {
+  const maximumIgnored = Math.min(
+    ranked.length - starParityDataByteCount,
+    starParityExpansionByteCount - baseErasures.length
+  );
+  let lastError: unknown;
+
+  for (let ignoredCount = 0; ignoredCount <= maximumIgnored; ignoredCount += 1) {
+    const ignored = ranked
+      .slice(0, ignoredCount)
+      .map((value) => value.index);
+
+    try {
+      return recoverCandidate(damaged, baseErasures, ignored);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  if (lastError instanceof Error) throw lastError;
+  throw new Error("The captured star candidates do not form a recoverable record yet");
+}
+
 export function recoverStarParity(
   observations: readonly ByteObservation[]
 ): RecoveredStarRecord {
@@ -117,6 +180,7 @@ export function recoverStarParity(
 
   const damaged = new Uint8Array(starParityCodewordByteCount);
   const erasures: number[] = [];
+  const ranked: RankedObservation[] = [];
 
   for (let index = 0; index < observations.length; index += 1) {
     const observation = observations[index]!;
@@ -127,6 +191,7 @@ export function recoverStarParity(
     }
 
     damaged[index] = observation.value;
+    ranked.push({ index, confidence: observation.confidence });
   }
 
   const observedStars = observations.length - erasures.length;
@@ -136,21 +201,21 @@ export function recoverStarParity(
     );
   }
 
-  const recovered = rsRecoverErrorsAndErasures(
+  ranked.sort((left, right) => left.confidence - right.confidence);
+  const candidate = generalisedMinimumDistanceRecovery(
     damaged,
-    starParityExpansionByteCount,
-    erasures
+    erasures,
+    ranked
   );
-  const bytes = recovered.codeword.slice(0, starParityDataByteCount);
-  const value = decodePayload(bytes);
-  const corrected = new Set(recovered.positions);
+  const bytes = candidate.recovery.codeword.slice(0, starParityDataByteCount);
+  const corrected = new Set(candidate.recovery.positions);
 
   return {
-    value,
+    value: candidate.value,
     bytes,
     observedStars,
-    reconstructedStars: recovered.positions.length,
-    discardedStars: recovered.errors,
+    reconstructedStars: candidate.recovery.positions.length,
+    discardedStars: candidate.recovery.errors + candidate.ignored.length,
     confidence: confidence(observations, corrected)
   };
 }
