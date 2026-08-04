@@ -139,13 +139,15 @@ export class VisualCaptureSeries {
       if (observation.value === null) continue;
 
       const evidence = this.#stars[index]!;
+      const value = observation.value;
       const confidence = 0.08 + observation.confidence * 0.92;
       const score = weight * confidence;
-      const current = evidence.peaks[observation.value] ?? 0;
+      const current = evidence.peaks[value] ?? 0;
+      const support = evidence.support[value] ?? 0;
 
-      evidence.peaks[observation.value] = Math.max(current, score);
-      if (score >= 0.2 && evidence.support[observation.value]! < 6) {
-        evidence.support[observation.value] += 1;
+      evidence.peaks[value] = Math.max(current, score);
+      if (score >= 0.2 && support < 6) {
+        evidence.support[value] = support + 1;
       }
     }
   }
