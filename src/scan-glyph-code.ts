@@ -1,8 +1,7 @@
 import {
   glyphCarriers,
   glyphMark,
-  glyphMarkCount,
-  glyphMarkLengths
+  glyphMarkCount
 } from "./glyph-code.ts";
 import {
   colourEvidence,
@@ -27,37 +26,37 @@ const placeholder: IdenticonInput = {
   imumCoeli: "aries"
 };
 const carriers = glyphCarriers(placeholder);
-const probeDistances = [2.5, 7.5, 12.5, 17.5] as const;
 
 function clamp(value: number, minimum: number, maximum: number): number {
   return Math.max(minimum, Math.min(maximum, value));
 }
 
-function probe(
+function markEvidence(
   image: ImageData,
   palette: ObservedPalette,
-  x: number,
-  y: number,
-  unitX: number,
-  unitY: number,
-  distance: number
+  carrierIndex: number,
+  markIndex: number,
+  digit: number
 ): number {
-  const scale = image.width / 1024;
+  const mark = glyphMark(carriers[carrierIndex]!, markIndex, digit);
+  const radians = mark.angle * Math.PI / 180;
+  const unitX = Math.cos(radians);
+  const unitY = Math.sin(radians);
   const tangentX = -unitY;
   const tangentY = unitX;
+  const centreX = (mark.startX + mark.endX) / 2;
+  const centreY = (mark.startY + mark.endY) / 2;
+  const scale = image.width / 1024;
   const values: number[] = [];
 
-  for (const along of [-1, 0, 1]) {
-    for (const across of [-2, -1, 0, 1, 2]) {
-      const sampleX = (
-        x + unitX * (distance + along) + tangentX * across
-      ) * scale;
-      const sampleY = (
-        y + unitY * (distance + along) + tangentY * across
-      ) * scale;
-
+  for (const along of [-2, -1, 0, 1, 2]) {
+    for (const across of [-3, -2, -1, 0, 1, 2, 3]) {
       values.push(colourEvidence(
-        pixel(image, sampleX, sampleY),
+        pixel(
+          image,
+          (centreX + unitX * along + tangentX * across) * scale,
+          (centreY + unitY * along + tangentY * across) * scale
+        ),
         palette.background,
         palette.layer1
       ));
@@ -65,7 +64,7 @@ function probe(
   }
 
   values.sort((left, right) => right - left);
-  const selected = values.slice(0, Math.max(3, Math.round(values.length * 0.45)));
+  const selected = values.slice(0, Math.max(5, Math.round(values.length * 0.34)));
   return selected.reduce((sum, value) => sum + value, 0) /
     Math.max(1, selected.length);
 }
@@ -76,52 +75,36 @@ function observeDigit(
   carrierIndex: number,
   markIndex: number
 ): DigitObservation {
-  const carrier = carriers[carrierIndex]!;
-  const reference = glyphMark(carrier, markIndex, 3);
-  const radians = reference.angle * Math.PI / 180;
-  const unitX = Math.cos(radians);
-  const unitY = Math.sin(radians);
-  const evidence = probeDistances.map((distance) => {
-    return probe(
-      image,
-      palette,
-      reference.startX,
-      reference.startY,
-      unitX,
-      unitY,
-      distance
-    );
+  const evidence = Array.from({ length: 4 }, (_unused, digit) => {
+    return markEvidence(image, palette, carrierIndex, markIndex, digit);
   });
-  const scores = glyphMarkLengths.map((_length, digit) => {
-    let score = 0;
-
-    for (let index = 0; index < evidence.length; index += 1) {
-      const expected = index <= digit;
-      const value = evidence[index]!;
-      score += expected ? value : (1 - value) * 0.8;
-    }
-
-    return score / evidence.length;
-  });
-
   let best = 0;
-  let second = Number.NEGATIVE_INFINITY;
+  let second = 0;
 
-  for (let digit = 1; digit < scores.length; digit += 1) {
-    if (scores[digit]! > scores[best]!) {
-      second = scores[best]!;
+  for (let digit = 1; digit < evidence.length; digit += 1) {
+    if (evidence[digit]! > evidence[best]!) {
+      second = best;
       best = digit;
       continue;
     }
 
-    second = Math.max(second, scores[digit]!);
+    if (digit !== best && evidence[digit]! > evidence[second]!) {
+      second = digit;
+    }
   }
 
-  if (!Number.isFinite(second)) second = 0;
-  const margin = scores[best]! - second;
-  const confidence = clamp(margin / 0.35, 0, 1);
+  if (second === best) {
+    second = best === 0 ? 1 : 0;
+    for (let digit = 0; digit < evidence.length; digit += 1) {
+      if (digit === best) continue;
+      if (evidence[digit]! > evidence[second]!) second = digit;
+    }
+  }
 
-  if (scores[best]! < 0.58 || margin < 0.055 || evidence[0]! < 0.28) {
+  const margin = evidence[best]! - evidence[second]!;
+  const confidence = clamp(margin / Math.max(0.12, evidence[best]!), 0, 1);
+
+  if (evidence[best]! < 0.22 || margin < 0.065) {
     return { value: null, confidence };
   }
 
