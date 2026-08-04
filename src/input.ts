@@ -1,4 +1,4 @@
-import { seedByteLength } from "./seed.ts";
+import { seedBytes, seedKind } from "./seed-value.ts";
 import { sign } from "./sign.ts";
 import type { IdenticonInput, RawIdenticonInput } from "./types.ts";
 
@@ -7,11 +7,11 @@ export function input(raw: RawIdenticonInput): IdenticonInput {
     throw new Error("seed must be a non-empty string");
   }
 
+  const kind = seedKind(raw.seedKind);
   const seed = raw.seed.trim();
-  seedByteLength(seed);
-
-  return {
+  const value: IdenticonInput = {
     seed,
+    seedKind: kind,
     solar: sign(raw.solar, "solar"),
     lunar: sign(raw.lunar, "lunar"),
     ascendant: sign(raw.ascendant, "ascendant"),
@@ -19,4 +19,7 @@ export function input(raw: RawIdenticonInput): IdenticonInput {
     descendant: sign(raw.descendant, "descendant"),
     imumCoeli: sign(raw.imumCoeli, "imumCoeli")
   };
+
+  seedBytes(value);
+  return value;
 }
