@@ -4,7 +4,6 @@ import { recoverVisualCode, type VisualCodeReading } from "./visual-code.ts";
 
 export interface VisualCaptureEvidence {
   readonly at: number;
-  readonly glyphs: readonly ByteObservation[];
   readonly stars: readonly ByteObservation[];
   readonly quality: number;
   readonly centre: readonly boolean[];
@@ -14,8 +13,8 @@ export interface VisualCaptureEvidence {
 export interface VisualCaptureSnapshot {
   readonly usefulMilliseconds: number;
   readonly frames: number;
-  readonly glyphBytes: number;
   readonly observedStars: number;
+  readonly requiredStars: number;
   readonly centreFound: number;
   readonly ringFound: number;
   readonly reading: VisualCodeReading | undefined;
@@ -62,7 +61,6 @@ function observation(votes: Float32Array): VoteResult {
 }
 
 export class VisualCaptureSeries {
-  readonly #glyphVotes = Array.from({ length: seedDataByteCount }, vote);
   readonly #starVotes = Array.from({ length: seedSlotCount }, vote);
   #centre: boolean[] = [];
   #ring: boolean[] = [];
@@ -71,7 +69,6 @@ export class VisualCaptureSeries {
   #lastUsefulAt: number | undefined;
 
   clear(): void {
-    for (const votes of this.#glyphVotes) votes.fill(0);
     for (const votes of this.#starVotes) votes.fill(0);
     this.#centre = [];
     this.#ring = [];
@@ -81,15 +78,11 @@ export class VisualCaptureSeries {
   }
 
   add(value: VisualCaptureEvidence): VisualCaptureSnapshot {
-    if (value.glyphs.length !== this.#glyphVotes.length) {
-      throw new Error(`capture requires ${this.#glyphVotes.length} glyph bytes`);
-    }
     if (value.stars.length !== this.#starVotes.length) {
       throw new Error(`capture requires ${this.#starVotes.length} star bytes`);
     }
 
     const weight = 0.35 + Math.max(0, Math.min(1, value.quality)) * 0.65;
-    this.addVotes(this.#glyphVotes, value.glyphs, weight);
     this.addVotes(this.#starVotes, value.stars, weight);
     this.mergeRegions(value.centre, value.ring);
 
@@ -108,15 +101,13 @@ export class VisualCaptureSeries {
   }
 
   snapshot(): VisualCaptureSnapshot {
-    const glyphs = this.#glyphVotes.map(observation);
     const stars = this.#starVotes.map(observation);
-    const glyphBytes = glyphs.filter((value) => value.value !== null).length;
     const observedStars = stars.filter((value) => value.value !== null).length;
     let reading: VisualCodeReading | undefined;
 
-    if (glyphBytes >= seedDataByteCount - 24 && observedStars >= 24) {
+    if (observedStars >= seedDataByteCount) {
       try {
-        reading = recoverVisualCode(glyphs, stars);
+        reading = recoverVisualCode(stars);
       } catch {
         reading = undefined;
       }
@@ -125,8 +116,8 @@ export class VisualCaptureSeries {
     return {
       usefulMilliseconds: this.#usefulMilliseconds,
       frames: this.#frames,
-      glyphBytes,
       observedStars,
+      requiredStars: seedDataByteCount,
       centreFound: this.#centre.filter(Boolean).length,
       ringFound: this.#ring.filter(Boolean).length,
       reading,
