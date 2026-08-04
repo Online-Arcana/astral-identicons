@@ -530,6 +530,7 @@ export class Scanner {
 
   private resetEvidence(): void {
     this.#series.clear();
+    this.#lastCircleAt = 0;
     this.#calibration = undefined;
     this.#bestFrame = undefined;
     this.#lastVerificationKey = "";
@@ -662,15 +663,10 @@ export class Scanner {
 
   private accumulateMosaic(frame: FrameEvidence): void {
     const target = context(this.#mosaic);
-
-    if (frame.quality.score > this.#baseMosaicScore) {
-      this.#baseMosaicScore = frame.quality.score;
-      target.drawImage(frame.canvas, 0, 0);
-    }
-
     const scale = this.#mosaic.width / layoutCanvas;
 
     const copyRegion = (
+      source: HTMLCanvasElement,
       x: number,
       y: number,
       size: number
@@ -685,7 +681,7 @@ export class Scanner {
       );
 
       target.drawImage(
-        frame.canvas,
+        source,
         sourceX,
         sourceY,
         sourceSize,
@@ -697,13 +693,36 @@ export class Scanner {
       );
     };
 
+    if (frame.quality.score > this.#baseMosaicScore) {
+      const previous = Number.isFinite(this.#baseMosaicScore)
+        ? copyCanvas(this.#mosaic)
+        : undefined;
+
+      this.#baseMosaicScore = frame.quality.score;
+      target.drawImage(frame.canvas, 0, 0);
+
+      if (previous) {
+        for (let index = 0; index < centreRegions.length; index += 1) {
+          if (!Number.isFinite(this.#centreMosaicScores[index]!)) continue;
+          const region = centreRegions[index]!;
+          copyRegion(previous, region.x, region.y, region.size);
+        }
+
+        for (let index = 0; index < ringRegions.length; index += 1) {
+          if (!Number.isFinite(this.#ringMosaicScores[index]!)) continue;
+          const region = ringRegions[index]!;
+          copyRegion(previous, region.x, region.y, region.size * 1.25);
+        }
+      }
+    }
+
     for (let index = 0; index < centreRegions.length; index += 1) {
       const score = frame.quality.centreScores[index] ?? 0;
       if (score <= this.#centreMosaicScores[index]!) continue;
 
       this.#centreMosaicScores[index] = score;
       const region = centreRegions[index]!;
-      copyRegion(region.x, region.y, region.size);
+      copyRegion(frame.canvas, region.x, region.y, region.size);
     }
 
     for (let index = 0; index < ringRegions.length; index += 1) {
@@ -712,7 +731,7 @@ export class Scanner {
 
       this.#ringMosaicScores[index] = score;
       const region = ringRegions[index]!;
-      copyRegion(region.x, region.y, region.size * 1.25);
+      copyRegion(frame.canvas, region.x, region.y, region.size * 1.25);
     }
   }
 
@@ -755,8 +774,7 @@ export class Scanner {
       return;
     }
 
-    const source = this.#bestFrame?.canvas ?? current.canvas;
-    this.freeze(source);
+    this.freeze(this.#mosaic);
     this.message("Read complete. Applying the exact seed and signs…", "success");
     await nextPaint();
 
