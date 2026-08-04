@@ -1,4 +1,7 @@
-import { rsEncode, rsRecoverErasures, rsValid } from "./rs.ts";
+import {
+  rsEncode,
+  rsRecoverErrorsAndErasures
+} from "./rs.ts";
 import {
   decodeSeedCodeword,
   seedDataByteCount,
@@ -35,7 +38,7 @@ export const starParityDataByteCount = seedDataByteCount;
 export const starParityCodewordByteCount = seedSlotCount;
 export const starParityExpansionByteCount =
   starParityCodewordByteCount - starParityDataByteCount;
-export const starSizes = [9, 13, 17, 21] as const;
+export const starSizes = [5, 10, 15, 20] as const;
 export const starOpacities = [0.52, 0.68, 0.84, 1] as const;
 
 if (starParityExpansionByteCount <= 0) {
@@ -85,16 +88,16 @@ function validateObservations(observations: readonly ByteObservation[]): void {
   }
 }
 
-function retainedConfidence(
+function confidence(
   observations: readonly ByteObservation[],
-  erased: ReadonlySet<number>
+  corrected: ReadonlySet<number>
 ): number {
   let total = 0;
   let count = 0;
 
   for (let index = 0; index < observations.length; index += 1) {
     const observation = observations[index]!;
-    if (observation.value === null || erased.has(index)) continue;
+    if (observation.value === null || corrected.has(index)) continue;
     total += observation.confidence;
     count += 1;
   }
@@ -113,74 +116,41 @@ export function recoverStarParity(
   validateObservations(observations);
 
   const damaged = new Uint8Array(starParityCodewordByteCount);
-  const erased = new Set<number>();
-  const candidates: Array<{ index: number; confidence: number }> = [];
+  const erasures: number[] = [];
 
   for (let index = 0; index < observations.length; index += 1) {
     const observation = observations[index]!;
 
     if (observation.value === null) {
-      erased.add(index);
+      erasures.push(index);
       continue;
     }
 
     damaged[index] = observation.value;
-    candidates.push({ index, confidence: observation.confidence });
   }
 
-  const observedStars = observations.length - erased.size;
+  const observedStars = observations.length - erasures.length;
   if (observedStars < starParityDataByteCount) {
     throw new Error(
       `Need at least ${starParityDataByteCount} readable stars; found ${observedStars}`
     );
   }
 
-  candidates.sort((left, right) => left.confidence - right.confidence);
-  const originalErasures = erased.size;
-  let candidateIndex = 0;
-  let lastError: unknown;
+  const recovered = rsRecoverErrorsAndErasures(
+    damaged,
+    starParityExpansionByteCount,
+    erasures
+  );
+  const bytes = recovered.codeword.slice(0, starParityDataByteCount);
+  const value = decodePayload(bytes);
+  const corrected = new Set(recovered.positions);
 
-  while (erased.size <= starParityExpansionByteCount) {
-    try {
-      const recovered = erased.size === 0
-        ? damaged
-        : rsRecoverErasures(
-            damaged,
-            starParityExpansionByteCount,
-            [...erased]
-          );
-
-      if (!rsValid(recovered, starParityExpansionByteCount)) {
-        throw new Error("expanded star recovery codeword is invalid");
-      }
-
-      const bytes = recovered.slice(0, starParityDataByteCount);
-      const value = decodePayload(bytes);
-      const discardedStars = erased.size - originalErasures;
-
-      return {
-        value,
-        bytes,
-        observedStars,
-        reconstructedStars: erased.size,
-        discardedStars,
-        confidence: retainedConfidence(observations, erased)
-      };
-    } catch (error) {
-      lastError = error;
-    }
-
-    if (erased.size === starParityExpansionByteCount) break;
-    const next = candidates[candidateIndex];
-    candidateIndex += 1;
-    if (!next) break;
-    if (erased.has(next.index)) continue;
-    erased.add(next.index);
-    damaged[next.index] = 0;
-  }
-
-  const message = lastError instanceof Error
-    ? lastError.message
-    : "star recovery failed";
-  throw new Error(`${message}; the readable stars conflict too strongly`);
+  return {
+    value,
+    bytes,
+    observedStars,
+    reconstructedStars: recovered.positions.length,
+    discardedStars: recovered.errors,
+    confidence: confidence(observations, corrected)
+  };
 }
