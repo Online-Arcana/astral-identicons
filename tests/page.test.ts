@@ -15,7 +15,8 @@ describe("responsive page assets", () => {
   test("unlocks the viewport and resolves deployable asset paths", () => {
     const result = page(source, {
       script: "./app.hash.js",
-      stylesheet: "./responsive.css"
+      stylesheet: "./responsive.css",
+      opencv: "./vendor/opencv.hash.js"
     });
 
     expect(result).toContain(
@@ -26,7 +27,19 @@ describe("responsive page assets", () => {
     expect(result).toContain(
       '<link rel="stylesheet" href="./responsive.css">'
     );
+    expect(result).toContain(
+      '<script id="opencv-runtime" src="./vendor/opencv.hash.js" async></script>'
+    );
     expect(result).toContain('src="./app.hash.js"');
+  });
+
+  test("keeps OpenCV optional for non-scanner pages", () => {
+    const result = page(source, {
+      script: "/app.js",
+      stylesheet: "/responsive.css"
+    });
+
+    expect(result).not.toContain("opencv-runtime");
   });
 
   test("fails when the expected source contract changes", () => {
