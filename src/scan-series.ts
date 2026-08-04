@@ -101,9 +101,10 @@ export class CaptureSeries {
     this.prune(value.at);
 
     const snapshot = this.snapshot(value.at);
-    const readingKey = snapshot.reading ? key(snapshot.reading) : undefined;
+    const reading = snapshot.reading;
+    const readingKey = reading ? key(reading) : undefined;
 
-    if (!readingKey) {
+    if (!readingKey || !reading) {
       this.#lastKey = undefined;
       this.#confirmations = 0;
       return { ...snapshot, confirmations: 0, ready: false };
@@ -121,7 +122,7 @@ export class CaptureSeries {
       snapshot.frames >= minimumFrames &&
       snapshot.centreFound === value.centre.length &&
       snapshot.ringFound === value.ring.length &&
-      snapshot.reading.erasures <= maximumCorrectedBytes &&
+      reading.erasures <= maximumCorrectedBytes &&
       this.#confirmations >= requiredConfirmations
     );
 
