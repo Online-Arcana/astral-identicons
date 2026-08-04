@@ -59,7 +59,6 @@ async function fromAstral(args: Arguments): Promise<IdenticonInput | null> {
   const forbidden = [
     "json",
     "seed",
-    "seed-kind",
     "solar",
     "lunar",
     "ascendant",
@@ -90,7 +89,6 @@ async function raw(args: Arguments): Promise<RawIdenticonInput> {
 
   return {
     seed: args.values.seed ?? fileInput.seed,
-    seedKind: args.values["seed-kind"] ?? fileInput.seedKind,
     solar: args.values.solar ?? fileInput.solar,
     lunar: args.values.lunar ?? fileInput.lunar,
     ascendant: args.values.ascendant ?? fileInput.ascendant,
