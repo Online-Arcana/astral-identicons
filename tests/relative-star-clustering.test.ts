@@ -181,38 +181,61 @@ function drawNorthStar(target: PixelImage, exposure: number): void {
   );
 }
 
+function renderedField(
+  include: (slot: number) => boolean
+): { observations: ReturnType<typeof observeStarParity>; rendered: number } {
+  const codeword = starParityCodeword(sample);
+  const pixels = image(512);
+  const scale = pixels.width / 1024;
+  const exposure = 0.68;
+  let rendered = 0;
+
+  for (let slot = 0; slot < codeword.length; slot += 1) {
+    if (!include(slot)) continue;
+    const symbol = starVisualSymbol(codeword[slot]!);
+    const point = codeSymbolPoint(slot, symbol.position);
+    drawStar(
+      pixels,
+      point.x * scale,
+      point.y * scale,
+      symbol.size,
+      palette.layer1,
+      symbol.opacity,
+      exposure
+    );
+    rendered += 1;
+  }
+  drawNorthStar(pixels, exposure);
+
+  return {
+    observations: observeStarParity(asImageData(pixels), palette),
+    rendered
+  };
+}
+
+function expectRecovery(
+  observations: ReturnType<typeof observeStarParity>,
+  minimumAssembled: number
+): void {
+  const assembled = observations.filter((value) => value.value !== null).length;
+  const recovered = recoverStarParity(observations);
+
+  expect(assembled >= minimumAssembled).toBe(true);
+  expect(recovered.value).toEqual(sample);
+}
+
 describe("phone-relative parity calibration", () => {
-  test("recovers from 108 stars after nonlinear brightness and size compression", () => {
-    const codeword = starParityCodeword(sample);
-    const pixels = image(512);
-    const scale = pixels.width / 1024;
-    const exposure = 0.68;
-    let rendered = 0;
+  test("recovers from 106 stars after nonlinear brightness and size compression", () => {
+    const capture = renderedField((slot) => slot % 6 !== 0);
 
-    for (let slot = 0; slot < codeword.length; slot += 1) {
-      // Simulate twenty stars being hidden by glare, motion or glyph overlap.
-      if (slot % 6 === 0) continue;
-      const symbol = starVisualSymbol(codeword[slot]!);
-      const point = codeSymbolPoint(slot, symbol.position);
-      drawStar(
-        pixels,
-        point.x * scale,
-        point.y * scale,
-        symbol.size,
-        palette.layer1,
-        symbol.opacity,
-        exposure
-      );
-      rendered += 1;
-    }
-    drawNorthStar(pixels, exposure);
+    expect(capture.rendered).toBe(106);
+    expectRecovery(capture.observations, 72);
+  });
 
-    const observations = observeStarParity(asImageData(pixels), palette);
-    const assembled = observations.filter((value) => value.value !== null).length;
-    const recovered = recoverStarParity(observations);
+  test("recovers from the live 81-star threshold under the same distortion", () => {
+    const capture = renderedField((slot) => slot % 8 < 5 || slot === 127);
 
-    expect(rendered).toBe(106);
-    expect(assembled >= 72).toBe(true);
-    expect(recovered.value).toEqual(sample);
+    expect(capture.rendered).toBe(81);
+    expectRecovery(capture.observations, 56);
   });
 });
