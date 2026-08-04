@@ -19,8 +19,12 @@ import {
   type PlanetaryConfiguration,
   type PlanetaryObservation
 } from "../src/planet-code.ts";
+import { tracedPlanetGlyphs } from "../src/planet-glyph-paths.ts";
 import {
+  planetAnchor,
   planetAnchorCount,
+  planetAnchorGroup,
+  planetAnchorGroupSize,
   planetaryGlyphs,
   planetLocalStateCount
 } from "../src/planet.ts";
@@ -97,15 +101,16 @@ describe("v9 planetary identity codec", () => {
       const configuration = planetaryConfiguration(identity);
       const decoded = planetaryIdentity(configuration);
       expect(sameBytes(decoded, identity)).toBe(true);
+      expect(new Set(configuration.planets.map((planet) => {
+        return planetAnchorGroup(planet.anchor);
+      })).size).toBe(11);
     }
   });
 
   test("round-trips deterministic pseudo-random identities", () => {
     let state = 0x13579bdf;
-
     for (let sampleIndex = 0; sampleIndex < 256; sampleIndex += 1) {
       const identity = new Uint8Array(32);
-
       for (let index = 0; index < identity.length; index += 1) {
         state ^= state << 13;
         state ^= state >>> 17;
@@ -114,22 +119,21 @@ describe("v9 planetary identity codec", () => {
       }
 
       const configuration = planetaryConfiguration(identity);
-      const anchors = new Set(configuration.planets.map((planet) => {
-        return planet.anchor;
+      const groups = new Set(configuration.planets.map((planet) => {
+        return planetAnchorGroup(planet.anchor);
       }));
-      const decoded = planetaryIdentity(configuration);
-
-      expect(anchors.size).toBe(11);
-      expect(sameBytes(decoded, identity)).toBe(true);
+      expect(groups.size).toBe(11);
+      expect(sameBytes(planetaryIdentity(configuration), identity)).toBe(true);
     }
   });
 
-  test("uses eleven distinct anchors and three distinct satellites per glyph", () => {
+  test("uses eleven separated groups and three distinct satellites per glyph", () => {
     const configuration = planetaryConfiguration(bytes(sequenceKey));
-    const anchors = new Set(configuration.planets.map((planet) => planet.anchor));
-
+    const groups = new Set(configuration.planets.map((planet) => {
+      return planetAnchorGroup(planet.anchor);
+    }));
     expect(configuration.planets.length).toBe(11);
-    expect(anchors.size).toBe(11);
+    expect(groups.size).toBe(11);
 
     for (const planet of configuration.planets) {
       const satellites = new Set([
@@ -141,40 +145,43 @@ describe("v9 planetary identity codec", () => {
     }
   });
 
-  test("rejects duplicate anchors and globally reserved configurations", () => {
-    const duplicateAnchor: PlanetaryConfiguration = {
-      planets: planetaryGlyphs.map((glyph) => ({
+  test("rejects duplicate groups and globally reserved configurations", () => {
+    const duplicateGroup: PlanetaryConfiguration = {
+      planets: planetaryGlyphs.map((glyph, index) => ({
         key: glyph.key,
-        anchor: 0,
+        anchor: planetAnchor(0, index % planetAnchorGroupSize(0)),
         rotation: 0,
         size: 0,
         density: 0,
         satellites: { small: 0, medium: 1, large: 2 }
       }))
     };
-
-    expect(() => planetaryIdentity(duplicateAnchor)).toThrow(
-      "anchors must be distinct"
+    expect(() => planetaryIdentity(duplicateGroup)).toThrow(
+      "anchor groups must be distinct"
     );
 
     const reserved: PlanetaryConfiguration = {
-      planets: planetaryGlyphs.map((glyph, index) => ({
-        key: glyph.key,
-        anchor: planetAnchorCount - 1 - index,
-        rotation: 11,
-        size: 5,
-        density: 5,
-        satellites: { small: 5, medium: 4, large: 3 }
-      }))
+      planets: planetaryGlyphs.map((glyph, index) => {
+        const group = 23 - index;
+        return {
+          key: glyph.key,
+          anchor: planetAnchor(group, planetAnchorGroupSize(group) - 1),
+          rotation: 11,
+          size: 5,
+          density: 5,
+          satellites: { small: 5, medium: 4, large: 3 }
+        };
+      })
     };
 
     expect(planetaryConfigurationSpace > 2n ** 256n).toBe(true);
     expect(reservedPlanetaryConfigurations > 0n).toBe(true);
     expect(() => planetaryIdentity(reserved)).toThrow("reserved v9 state");
     expect(planetLocalStateCount).toBe(51_840);
+    expect(planetAnchorCount).toBe(256);
   });
 
-  test("retains ranked alternatives without duplicate-anchor candidates", () => {
+  test("retains ranked alternatives without duplicate-group candidates", () => {
     const canonical = planetaryConfiguration(bytes(sequenceKey));
     const observations: PlanetaryObservation[] = canonical.planets.map((planet) => ({
       key: planet.key,
@@ -202,8 +209,15 @@ describe("v9 planetary identity codec", () => {
     expect(candidates.length > 0).toBe(true);
     expect(sameBytes(candidates[0]!.identity, bytes(sequenceKey))).toBe(true);
     expect(new Set(candidates[0]!.configuration.planets.map((planet) => {
-      return planet.anchor;
+      return planetAnchorGroup(planet.anchor);
     })).size).toBe(11);
+  });
+
+  test("uses traced Unicode contours rather than platform font rendering", () => {
+    expect(tracedPlanetGlyphs.mars.unicode).toBe("♂");
+    expect(tracedPlanetGlyphs.mars.path.startsWith("M")).toBe(true);
+    expect(tracedPlanetGlyphs.mars.path.includes("Z")).toBe(true);
+    expect(tracedPlanetGlyphs.mars.font).toBe("Noto Sans Symbols");
   });
 });
 
@@ -243,7 +257,6 @@ describe("v9 canonical record and parity stars", () => {
       data: all.slice(0, v9DataByteCount),
       parity: all.slice(v9DataByteCount)
     });
-
     expect(recovered.value).toEqual(sample);
     expect(recovered.errors).toBe(32);
     expect(recovered.erasures).toBe(64);
@@ -251,7 +264,6 @@ describe("v9 canonical record and parity stars", () => {
 
   test("maps every byte independently and rejects all 32 reserved star states", () => {
     const used = new Set<number>();
-
     for (let byte = 0; byte < 256; byte += 1) {
       const state = v9ParityVisualState(byte);
       used.add(state.state);
@@ -270,7 +282,6 @@ describe("v9 canonical record and parity stars", () => {
         }
       }
     }
-
     expect(used.size).toBe(256);
     expect(reserved).toBe(32);
     expect(v9ParityReservedStateCount).toBe(32);
@@ -287,7 +298,6 @@ describe("v9 geometry and renderer", () => {
       const point = planetAnchorPoint(anchor);
       planets.add(`${point.x.toFixed(6)}:${point.y.toFixed(6)}`);
     }
-
     for (let parityGroup = 0; parityGroup < v9ParityStarCount; parityGroup += 1) {
       for (let position = 0; position < 8; position += 1) {
         const point = parityAnchorPoint(parityGroup, position);
@@ -325,6 +335,8 @@ describe("v9 geometry and renderer", () => {
 
     expect(svg).toContain('data-code-version="9"');
     expect(svg).toContain('data-code="reed-solomon-168-40-parity-stars-128-v9"');
+    expect(svg).toContain('data-layout="interior-blue-noise"');
+    expect(svg).toContain('data-code-anchors="256"');
     expect(svg).toContain('id="central-sun-reference"');
     expect(svg).toContain('id="north-star-reference"');
     expect(svg).toContain('id="south-star-reference"');
@@ -336,16 +348,15 @@ describe("v9 geometry and renderer", () => {
     const parityStart = svg.indexOf('<g id="parity-stars-v9"');
     const planetaryStart = svg.indexOf('<g id="planetary-identity-v9"');
     const ringStart = svg.indexOf('<g id="literal-ring-system"');
-
     expect(parityStart).toBeGreaterThanOrEqual(0);
     expect(planetaryStart).toBeGreaterThan(parityStart);
     expect(ringStart).toBeGreaterThan(planetaryStart);
 
     const paritySvg = svg.slice(parityStart, planetaryStart);
     const planetarySvg = svg.slice(planetaryStart, ringStart);
-
     expect(paritySvg).not.toContain('stroke=');
     expect(planetarySvg).not.toContain('stroke=');
+    expect(planetarySvg).not.toContain('<text');
 
     expect(count(
       svg,
@@ -361,6 +372,7 @@ describe("v9 geometry and renderer", () => {
     expect(count(svg, /data-calibrates="fading-only"/gu)).toBe(12);
     expect(count(svg, /data-reference-angle=/gu)).toBe(12);
     expect(count(svg, /data-calibration-reference="true"/gu)).toBe(12);
+    expect(count(svg, /data-vector-source="unicode-font-outline"/gu)).toBe(12);
     expect(count(svg, /data-planet-index=/gu)).toBe(11);
     expect(count(svg, /data-satellite-size=/gu)).toBe(33);
     expect(count(svg, /data-parity-index=/gu)).toBe(128);
