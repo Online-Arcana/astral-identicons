@@ -1,7 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { astralInput } from "../src/astral.ts";
-import { seedCodeword, seedPayload, decodeSeedCodeword } from "../src/seed.ts";
-import { base64Url } from "../src/seed-value.ts";
+import { decodeSeedCodeword, seedCodeword, seedPayload } from "../src/seed.ts";
+import {
+  base64Url,
+  boundPublicKey,
+  seedBytes,
+  seedMaterial
+} from "../src/seed-value.ts";
 
 const signs = [
   "\n",
@@ -43,30 +48,46 @@ function container(key: Uint8Array): Uint8Array {
 }
 
 describe("packaged astral input", () => {
-  test("copies the exact 32 public-key bytes into the visual payload", () => {
+  test("retains and encodes the exact 32 public-key bytes", () => {
     const key = Uint8Array.from({ length: 32 }, (_value, index) => index * 7 & 0xff);
+    const expected = key.slice();
     const value = astralInput(container(key));
+    key.fill(0);
     const payload = seedPayload(value);
 
-    expect(value.seed).toBe(base64Url(key));
-    expect([...payload.slice(3, 35)]).toEqual([...key]);
+    expect(value.seed).toBe(base64Url(expected));
+    expect([...(boundPublicKey(value) ?? [])]).toEqual([...expected]);
+    expect([...seedBytes(value)]).toEqual([...expected]);
+    expect([...(seedMaterial(value) as Uint8Array)]).toEqual([...expected]);
+    expect([...payload.slice(3, 35)]).toEqual([...expected]);
     expect(payload[1]).toBe(2);
     expect(payload[2]).toBe(32);
-    expect(value.solar).toBe("capricorn");
-    expect(value.lunar).toBe("virgo");
-    expect(value.ascendant).toBe("capricorn");
-    expect(value.midheaven).toBe("libra");
-    expect(value.descendant).toBe("cancer");
-    expect(value.imumCoeli).toBe("aries");
+    expect(JSON.parse(JSON.stringify(value))).toEqual({
+      seed: base64Url(expected),
+      solar: "capricorn",
+      lunar: "virgo",
+      ascendant: "capricorn",
+      midheaven: "libra",
+      descendant: "cancer",
+      imumCoeli: "aries"
+    });
   });
 
-  test("scanner decoding reproduces the canonical public key and signs", () => {
+  test("scanner decoding retains the exact recovered bytes and signs", () => {
     const key = Uint8Array.from({ length: 32 }, (_value, index) => 255 - index);
     const value = astralInput(container(key));
     const recovered = decodeSeedCodeword(seedCodeword(value));
 
     expect(recovered).toEqual(value);
     expect(recovered.seed).toBe(base64Url(key));
+    expect([...(boundPublicKey(recovered) ?? [])]).toEqual([...key]);
+    expect([...seedBytes(recovered)]).toEqual([...key]);
+    expect(recovered.solar).toBe("capricorn");
+    expect(recovered.lunar).toBe("virgo");
+    expect(recovered.ascendant).toBe("capricorn");
+    expect(recovered.midheaven).toBe("libra");
+    expect(recovered.descendant).toBe("cancer");
+    expect(recovered.imumCoeli).toBe("aries");
   });
 
   test("rejects older text-key containers for direct file ingestion", () => {
