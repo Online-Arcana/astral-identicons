@@ -19,11 +19,24 @@ const sample = input({
 
 function observations(
   values: Uint8Array,
-  included: ReadonlySet<number>
+  included: ReadonlySet<number>,
+  confidence = 0.98
 ): readonly ByteObservation[] {
   return [...values].map((value, index) => ({
     value: included.has(index) ? value : null,
-    confidence: included.has(index) ? 0.98 : 0
+    confidence: included.has(index) ? confidence : 0
+  }));
+}
+
+function conflictingObservations(
+  values: Uint8Array,
+  included: ReadonlySet<number>,
+  maskValue: number,
+  confidence: number
+): readonly ByteObservation[] {
+  return [...values].map((value, index) => ({
+    value: included.has(index) ? value ^ maskValue : null,
+    confidence: included.has(index) ? confidence : 0
   }));
 }
 
@@ -98,5 +111,44 @@ describe("human cumulative scanner capture", () => {
     expect(muchLater.observedStars).toBe(25);
     expect(muchLater.centreFound).toBe(2);
     expect(muchLater.ringFound).toBe(2);
+  });
+
+  test("later shaky frames cannot reduce the saved count or erase a reconstruction", () => {
+    const series = new VisualCaptureSeries();
+    const codeword = starParityCodeword(sample);
+    const selected = new Set(spread(80));
+
+    const first = series.add({
+      at: 0,
+      stars: observations(codeword, selected, 0.99),
+      quality: 0.94,
+      centre: mask(9, [0, 1, 2, 3, 4, 5, 6, 7, 8]),
+      ring: mask(12, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11])
+    });
+
+    expect(first.observedStars).toBe(80);
+    expect(first.reading?.value).toEqual(sample);
+
+    series.add({
+      at: 120,
+      stars: conflictingObservations(codeword, selected, 0x55, 0.82),
+      quality: 0.72,
+      centre: mask(9, []),
+      ring: mask(12, [])
+    });
+
+    const afterSecondShake = series.add({
+      at: 240,
+      stars: conflictingObservations(codeword, selected, 0xaa, 0.8),
+      quality: 0.7,
+      centre: mask(9, []),
+      ring: mask(12, [])
+    });
+
+    expect(afterSecondShake.observedStars).toBe(80);
+    expect(afterSecondShake.ready).toBe(true);
+    expect(afterSecondShake.reading?.value).toEqual(sample);
+    expect(afterSecondShake.centreFound).toBe(9);
+    expect(afterSecondShake.ringFound).toBe(12);
   });
 });
