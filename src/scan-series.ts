@@ -37,7 +37,6 @@ const maximumCorrectedBytes = 18;
 function key(reading: SeedReading): string {
   const value = reading.value;
   return [
-    value.seedKind,
     value.seed,
     value.solar,
     value.lunar,
