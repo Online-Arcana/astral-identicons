@@ -1,11 +1,11 @@
 import {
-  codeAnchorPoint,
-  codeAnchors,
   codeSectorCount,
   codeSymbolPoint,
   codeSymbolSpacing,
   codeTrackCount,
-  innerClipRadius
+  innerClipRadius,
+  northStar,
+  northStarPoint
 } from "./code-layout.ts";
 import {
   canvas,
@@ -35,6 +35,7 @@ const layer0X = centre - layer0Radius;
 const layer0Y = centre - layer0Radius;
 const coreReferenceOpacity = 0.28;
 const codeStarHaloPadding = 4;
+const northStarHaloPadding = 6;
 
 function nestedSvg(
   body: string,
@@ -80,26 +81,40 @@ function starBody(
   return monochrome(scopeIds(asset.body, prefix), colour);
 }
 
-function registrationStars(
+function northStarLayer(
   asset: ReturnType<typeof parseSvg>,
-  colour: string
+  colour: string,
+  background: string
 ): string {
-  return codeAnchors
-    .map((anchor, index) => {
-      const { x, y } = codeAnchorPoint(anchor);
-      const body = starBody(asset, colour, `registration-${index}`);
+  const point = northStarPoint();
+  const body = starBody(asset, colour, "north-star-reference");
+  const haloRadius = northStar.size / 2 + northStarHaloPadding;
 
-      return `<g data-code-anchor="${index}" opacity="0.72">${placedSvg(
-        body,
-        asset.viewBox,
-        x,
-        y,
-        anchor.size,
-        "",
-        anchor.angle + 90
-      )}</g>`;
-    })
-    .join("\n");
+  return `<g
+    id="north-star"
+    data-recognition-role="north-star-reference"
+    data-reference-position="top"
+    data-reference-size="${northStar.size}"
+    data-reference-opacity="${northStar.opacity}"
+    opacity="${northStar.opacity}"
+  >
+    <circle
+      cx="${point.x}"
+      cy="${point.y}"
+      r="${haloRadius}"
+      fill="${background}"
+      opacity="0.96"
+    />
+    ${placedSvg(
+      body,
+      asset.viewBox,
+      point.x,
+      point.y,
+      northStar.size,
+      "data-calibration-reference=\"true\"",
+      0
+    )}
+  </g>`;
 }
 
 function recoveryStars(
@@ -114,9 +129,9 @@ function recoveryStars(
   for (let slot = 0; slot < codeword.length; slot += 1) {
     const symbol = starVisualSymbol(codeword[slot]!);
     const { x, y } = codeSymbolPoint(slot, symbol.position);
-    const style = hash32(`astrological-identicon/recovery-star/v7:${slot}`);
+    const style = hash32(`astrological-identicon/parity-star/v8:${slot}`);
     const rotation = (style >>> 16) % 360;
-    const body = starBody(asset, colour, `recovery-star-${slot}`);
+    const body = starBody(asset, colour, `parity-star-${slot}`);
     const haloRadius = symbol.size / 2 + codeStarHaloPadding;
     const halo = `<circle cx="${x}" cy="${y}" r="${haloRadius}" fill="${background}" opacity="0.94"/>`;
 
@@ -127,7 +142,7 @@ function recoveryStars(
         data-code-position="${symbol.position.toString(16).toUpperCase()}"
         data-code-size-level="${symbol.sizeLevel}"
         data-code-opacity-level="${symbol.opacityLevel}"
-        data-code-role="record-recovery"
+        data-code-role="parity-disambiguation"
         opacity="${symbol.opacity}"
       >${halo}${placedSvg(
         body,
@@ -160,9 +175,13 @@ export async function buildIdenticon(
 
   const starSource = await assets.star();
   const starAsset = parseSvg(starSource);
-  const anchorLayer = registrationStars(starAsset, colours.layer0.reduced);
   const recoveryLayer = recoveryStars(
     value,
+    starAsset,
+    colours.layer1.reduced,
+    colours.background.reduced
+  );
+  const northLayer = northStarLayer(
     starAsset,
     colours.layer1.reduced,
     colours.background.reduced
@@ -228,9 +247,9 @@ export async function buildIdenticon(
   const data = escapeXml(JSON.stringify(value));
 
   return `<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="${canvas}" height="${canvas}" viewBox="0 0 ${canvas} ${canvas}" role="img" aria-label="${escapeXml(title)}" data-input="${data}" data-palette-index="${paletteIndex}" data-code-version="7">
+<svg xmlns="http://www.w3.org/2000/svg" width="${canvas}" height="${canvas}" viewBox="0 0 ${canvas} ${canvas}" role="img" aria-label="${escapeXml(title)}" data-input="${data}" data-palette-index="${paletteIndex}" data-code-version="8">
   <title>${escapeXml(title)}</title>
-  <metadata>Generated deterministically by astrological-identicon. The approved constellation, grid, ring, palette and stars are the complete visual grammar. The 128-star Reed-Solomon recovery record reconstructs the exact 40-byte identity and signs from any 40 reliable star observations; the constellation, grid, ring and palette independently verify the result.</metadata>
+  <metadata>Generated deterministically by astrological-identicon. The palette, Solar constellation, centre grid and astrological ring are the primary visual record. The 128 recovery stars contain Reed-Solomon parity only. Their position, size and opacity encode parity symbols, while the fixed North Star canonises orientation, apparent size and relative brightness.</metadata>
   <defs>
     <clipPath id="inner-clip">
       <circle cx="${centre}" cy="${centre}" r="${innerClipRadius}"/>
@@ -267,21 +286,12 @@ export async function buildIdenticon(
   </g>
 
   <g
-    id="registration-stars"
-    data-recognition-role="orientation-anchors"
-    data-code-colour="layer0"
-    clip-path="url(#inner-clip)"
-  >
-    ${anchorLayer}
-  </g>
-
-  <g
     id="recovery-stars"
-    data-code="reed-solomon-star-record-128-40-v7"
-    data-code-role="record-recovery"
+    data-code="reed-solomon-parity-stars-128-v8"
+    data-code-role="error-correction-disambiguation"
     data-code-slots="${seedSlotCount}"
     data-code-source-bytes="${starParityDataByteCount}"
-    data-code-expansion-bytes="${starParityExpansionByteCount}"
+    data-code-parity-bytes="${starParityExpansionByteCount}"
     data-code-minimum-readable-stars="${starParityDataByteCount}"
     data-code-tracks="${codeTrackCount}"
     data-code-sectors="${codeSectorCount}"
@@ -290,6 +300,7 @@ export async function buildIdenticon(
     clip-path="url(#inner-clip)"
   >
     ${recoveryLayer}
+    ${northLayer}
   </g>
 
   <g id="ring-system">
