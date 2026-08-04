@@ -1,6 +1,6 @@
 {
   "name": "astrological-identicon",
-  "version": "0.13.3",
+  "version": "0.14.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -10,6 +10,10 @@
     "palette:tune": "bun run scripts/tune-palette.ts",
     "build:pages": "bun run scripts/build-pages.ts",
     "test": "bun test",
-    "check": "bunx tsc --noEmit"
+    "check": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/bun": "1.3.14",
+    "typescript": "5.9.3"
   }
 }

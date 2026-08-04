@@ -1,6 +1,6 @@
 import { astralInput } from "./astral.ts";
 import { fileAssets } from "./assets.ts";
-import { buildIdenticon } from "./build.ts";
+import { buildCurrentIdenticon } from "./build-current.ts";
 import { input } from "./input.ts";
 import type { IdenticonInput, RawIdenticonInput } from "./types.ts";
 
@@ -107,7 +107,7 @@ async function main(): Promise<void> {
 
   const value = await fromAstral(args) ?? input(await raw(args));
   const assetsRoot = args.values.assets ?? `${import.meta.dir}/../assets`;
-  const svg = await buildIdenticon(value, fileAssets(assetsRoot));
+  const svg = await buildCurrentIdenticon(value, fileAssets(assetsRoot));
   const output = args.values.out;
 
   if (output) {
