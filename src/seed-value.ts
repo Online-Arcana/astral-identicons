@@ -2,6 +2,8 @@ import type { IdenticonInput } from "./types.ts";
 
 const encoder = new TextEncoder();
 const keyPattern = /^[A-Za-z0-9_-]{43}$/u;
+const source = Symbol("astral-identicon/raw-seed");
+type BoundInput = IdenticonInput & { [source]?: Uint8Array };
 
 export function base64Url(value: Uint8Array): string {
   let raw = "";
@@ -34,7 +36,36 @@ export function isPublicKey(value: string): boolean {
   }
 }
 
+export function bindPublicKey<T extends IdenticonInput>(
+  value: T,
+  raw: Uint8Array
+): T {
+  if (raw.byteLength !== 32) throw new Error("Ed25519 public key must contain exactly 32 bytes");
+  if (base64Url(raw) !== value.seed) {
+    throw new Error("Public-key display does not match the raw key bytes");
+  }
+
+  Object.defineProperty(value, source, {
+    value: raw.slice(),
+    enumerable: false,
+    configurable: false,
+    writable: false
+  });
+  return value;
+}
+
+export function boundPublicKey(value: Pick<IdenticonInput, "seed">): Uint8Array | undefined {
+  const raw = (value as BoundInput)[source];
+  return raw?.slice();
+}
+
+export function isPublicSeed(value: Pick<IdenticonInput, "seed">): boolean {
+  return boundPublicKey(value) !== undefined || isPublicKey(value.seed);
+}
+
 export function seedBytes(value: Pick<IdenticonInput, "seed">): Uint8Array {
+  const bound = boundPublicKey(value);
+  if (bound) return bound;
   if (isPublicKey(value.seed)) return rawPublicKey(value.seed);
   if (value.seed.length === 0) throw new Error("seed must be a non-empty string");
   if (value.seed.trim() !== value.seed) {
@@ -49,5 +80,7 @@ export function seedBytes(value: Pick<IdenticonInput, "seed">): Uint8Array {
 }
 
 export function seedMaterial(value: Pick<IdenticonInput, "seed">): string | Uint8Array {
+  const bound = boundPublicKey(value);
+  if (bound) return bound;
   return isPublicKey(value.seed) ? rawPublicKey(value.seed) : value.seed;
 }
