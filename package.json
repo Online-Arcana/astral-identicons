@@ -8,6 +8,7 @@
     "dev": "bun --watch src/server.ts",
     "identicon": "bun run src/cli.ts",
     "palette:tune": "bun run scripts/tune-palette.ts",
+    "glyphs:generate": "python3 scripts/generate-planet-glyphs.py",
     "build:pages": "bun run scripts/build-pages.ts",
     "test": "bun test",
     "check": "tsc --noEmit"
