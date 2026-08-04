@@ -1,8 +1,8 @@
 # Astral Identicons
 
-Deterministic astrological SVG identicons built from one exact visual seed and six resolved chart signs.
+Deterministic astrological SVG identicons built from one exact UTF-8 seed and six resolved chart signs.
 
-Each identicon is both a repeatable visual mark and a structured visual record. The palette, constellation, inner grid, astrological ring and coded stars are independent observations of the same source fields, allowing the browser scanner to reconstruct the values required to generate the image again.
+Each identicon is both a visual mark and a recoverable record. Its palette, Solar constellation, centre grid, astrological ring, glyph data marks and parity stars form independent but cooperating recognition channels.
 
 <p align="center">
   <img src="./examples/capricorn.svg" alt="Example Capricorn astral identicon" width="420">
@@ -10,54 +10,112 @@ Each identicon is both a repeatable visual mark and a structured visual record. 
 
 ## Visual grammar
 
-- **Inner interpretation:** the Solar sign selects the large upright constellation and artistic sign illustration. A fixed 3 × 3 grid places upright references for the Sun, Moon, Ascendant, Midheaven, Descendant and Imum Coeli.
-- **Astrological ring:** twelve equally spaced glyphs sit between two concentric circles. Solar glyphs occupy the cardinal points, Lunar glyphs occupy the alternating points, and the four chart angles fill the remaining positions. Imum Coeli is on the left and Descendant is on the right, matching the inner grid.
-- **Palette:** one of 64 reduced three-colour palettes is drawn by a deterministic SHA-256 counter-mode PRNG from the exact seed and its nonce. It acts as an additional camera check rather than replacing the seed.
-- **Protected star payload:** 128 stars encode the exact seed and all six signs in a Reed-Solomon-protected visual codeword.
+- **Solar layer:** a large upright constellation and artistic sign interpretation establish the Solar sign and orientation.
+- **Centre grid:** nine upright glyphs repeat the Sun, Moon, Ascendant, Midheaven, Descendant and Imum Coeli roles.
+- **Astrological ring:** twelve rotated glyphs repeat those roles between two concentric circles.
+- **Palette:** one of 64 reduced three-colour palettes is selected by a SHA-256 counter-mode PRNG from the exact seed and its nonce.
+- **Glyph data:** twenty centre and ring glyph carriers hold the complete 40-byte systematic payload, two bytes per carrier.
+- **Parity stars:** 128 stars contain expanded Reed-Solomon parity used only to repair or disambiguate incomplete glyph reads.
 
-The upright constellation and asymmetric registration stars establish orientation. The inner grid and ring independently identify the signs. The coded stars carry the authoritative recoverable payload and resolve fields whose visual glyph readings are uncertain.
+The stars are not the primary payload. The glyph carriers contain the data. The star field supplies redundant correction evidence.
 
-## Exact payload and error correction
+## Visual-code version 6
 
-Visual-code version 5 stores a 64-byte codeword:
+The recoverable payload contains:
 
 ```text
-40 data bytes
+40 systematic data bytes
     exact UTF-8 seed, up to 32 bytes
     Sun, Moon, Ascendant, Midheaven, Descendant and Imum Coeli
-    format header and checksum
+    format header and CRC
 
 24 Reed-Solomon parity bytes
-    recovery of up to 24 erased or deliberately discarded bytes
+    repair of up to 24 missing or deliberately discarded glyph bytes
 ```
 
-Each of the 128 stars represents one hexadecimal nibble by occupying one of sixteen positions in its polar cell. Two stars form one codeword byte. Weak or conflicting camera observations are progressively treated as erasures until the Reed-Solomon codeword, payload checksum, UTF-8 seed, signs and palette relationship validate together.
+The forty data bytes are distributed across twenty glyph carriers. Each carrier has eight small radial marks. Every mark uses one of four clearly separated positions, encoding two bits. Eight marks therefore store two bytes while the glyph itself still visually identifies its astrological sign and role.
 
-The seed is not reduced to a palette number and is not replaced by a hash. For example, an identicon generated with:
+The twenty-four payload parity bytes are expanded into a 128-byte Reed-Solomon star codeword. Each star byte is represented by:
+
+- one of sixteen positions inside its polar slot;
+- one of four star sizes;
+- one of four opacity levels.
+
+Only twenty-four correct star bytes are mathematically required to reconstruct the complete parity section. Fifty percent plus one of the 128 stars is therefore comfortably above the recovery threshold. The recovered star parity can then repair as many as twenty-four missing glyph data bytes.
+
+The seed is never replaced by a hash or palette number. For example:
 
 ```text
 62-70-F2-Example
 ```
 
-is scanned back as exactly:
+is recovered exactly as:
 
 ```text
 62-70-F2-Example
 ```
 
-Seeds longer than 32 UTF-8 bytes are rejected because they cannot be represented exactly within this visual code version.
+Seeds longer than 32 UTF-8 bytes are rejected because visual-code version 6 cannot represent them exactly.
+
+## Human camera capture
+
+The public frontend includes a fully self-contained browser scanner. Camera frames and reconstructed data remain in the browser. GitHub Pages does not download or initialise OpenCV, WebAssembly or another external vision runtime.
+
+The user is not expected to hold the camera steady for several seconds.
+
+1. Open **Scan identicon**.
+2. Bring the complete circle into the guide for one or two clear moments.
+3. The scanner saves every useful glyph byte, parity star, colour sample and clear visual region.
+4. Blur, hand shake or temporarily moving the identicon out of view does not erase progress.
+5. Evidence remains available for the whole scanner session, even after long gaps.
+6. As soon as the payload is recoverable and all six sign roles have cumulative coverage, the scanner snaps the reconstruction and stops the camera.
+7. A progress bar then shows payload reconstruction, parity repair, palette checking and sign verification. The user no longer needs to keep the camera raised while this processing runs.
+
+The scanner accepts useful moments rather than demanding one perfect frame. Its cumulative mosaic preserves the clearest observed version of each centre and ring region.
+
+```text
+camera focus, exposure and white-balance settling
+    → brief initial preparation
+
+paired outer-circle detection
+    → scale and centre normalisation
+
+local TypeScript Gaussian smoothing, Canny-style edges,
+Laplacian sharpness, contrast and clipping analysis
+    → reject only unusable moments
+
+palette + asymmetric anchors
+    → layer order and orientation
+
+glyph data marks
+    → primary 40-byte payload observations
+
+parity-star position + size + opacity
+    → redundant Reed-Solomon correction observations
+
+persistent evidence votes + best-region mosaic
+    → progress survives shake and out-of-frame gaps
+
+recoverable payload + cumulative six-role coverage
+    → freeze reconstruction and stop camera
+
+offline progress phase
+    → parity repair, palette agreement, constellation and role verification
+```
+
+A saved photo can be processed through the same reconstruction and verification path.
 
 ## Palette nonces and target colours
 
-Every seed has a deterministic 256-bit nonce. Palette selection always follows the same rule:
+Every seed has a deterministic 256-bit nonce. Palette selection always follows the same generic rule:
 
 ```text
 palette index = SHA-256 counter-mode PRNG(seed, nonce)
 ```
 
-Ordinary seeds receive a nonce derived cryptographically from the seed. Selected seeds may instead use a tuned nonce from `config/palette-targets.json`. This is not a seed-to-colour exception and it does not bypass the PRNG. The tuner searches the normal nonce space until the PRNG reaches the exact requested palette, or the closest palette available in the 64-entry codebook under a CIE Lab colour-distance calculation.
+Ordinary seeds receive a cryptographically derived nonce. Selected seeds may use a tuned nonce from `config/palette-targets.json`. The tuner still uses the normal PRNG path. It searches for the exact requested palette, or the nearest available palette under CIE Lab distance.
 
-The configured example makes `6270f2-example` resolve through the normal PRNG path to:
+The configured example makes `6270f2-example` resolve to:
 
 ```text
 background  #525
@@ -65,58 +123,11 @@ layer 0     #6EB
 layer 1     #69E
 ```
 
-After adding or changing a target in the JSON file, calculate its nonce with:
+Recalculate configured targets with:
 
 ```sh
 bun run palette:tune
 ```
-
-## Camera scanner
-
-The public frontend includes a fully self-contained in-page camera scanner. Camera frames and reconstructed image data stay in the browser and are not uploaded. The GitHub Pages build does not download, preload or initialise OpenCV, WebAssembly or any other external image-processing runtime.
-
-1. Select **Scan identicon**.
-2. Keep the complete outer circle inside the guide.
-3. Allow the camera briefly to settle focus, exposure and white balance.
-4. The scanner collects useful evidence from a rolling 2–5 second series of frames.
-5. It freezes only after the protected payload and every expected visual region are recoverable.
-6. **Use photo** remains available for a saved image.
-
-The user does not need to hold one perfect frame continuously. Clear stars, centre glyphs and ring glyphs observed at different moments are accumulated into one reconstruction. After a successful read, the scanner closes automatically and applies the exact recovered seed and six signs to the builder. It can be opened again for another scan.
-
-The recognition pipeline uses all visual evidence together:
-
-```text
-camera autofocus, exposure and white-balance settling
-    → short initial delay before evidence collection
-
-paired outer-circle detection
-    → scale and centre normalisation
-
-local TypeScript Gaussian smoothing + Canny-style edge hysteresis
-local Laplacian sharpness + contrast + clipping analysis
-    → blur, exposure and regional-presence gates
-
-observed palette + asymmetric anchors
-    → layer order and candidate orientation
-
-rolling 2–5 second evidence window
-    → cumulative protected-star votes and best-region mosaic
-
-128 coded stars + Reed-Solomon recovery
-    → exact seed and authoritative six-sign payload
-
-expected constellation + 9 centre glyphs + 12 ring glyphs
-    → independent final reconstruction verification
-```
-
-The scanner does not accept an image because only the circle is visible. The cumulative star payload must decode with its checksum and Reed-Solomon protection, the palette must agree with the recovered seed, and the expected constellation, grid glyphs and ring glyphs must all be present in the reconstructed mosaic.
-
-A shifted camera palette or a low-confidence glyph does not become the final field value. The protected payload resolves it, while the palette and duplicated glyphs help reject incorrect orientation and layer interpretations.
-
-## Scope
-
-This project is a visual interpreter, SVG compositor and browser-side identicon reader. It expects already resolved signs for Sun, Moon, Ascendant, Midheaven, Descendant and Imum Coeli. It does not calculate a natal chart or generate the source zodiac artwork.
 
 ## Web builder
 
@@ -144,7 +155,7 @@ The browser preview and downloaded file use the same `buildIdenticon()` renderer
 
 ## GitHub Pages
 
-The public generator and scanner are deployed as a static site. Visitors do not need Bun, a server-side API or a runtime image-processing download.
+The generator and scanner deploy as a static site. Visitors do not need Bun, a server API or a runtime image-processing download.
 
 1. Open **Settings → Pages**.
 2. Set **Source** to **GitHub Actions**.
@@ -160,7 +171,7 @@ Build the same static artefact locally with:
 bun run build:pages
 ```
 
-The generated application bundle and stylesheet use content-addressed URLs, preventing a previous mobile browser bundle from silently remaining active after a deployment.
+Application assets use content-addressed filenames so a previous mobile bundle cannot silently remain active after deployment.
 
 ## CLI
 
@@ -176,7 +187,7 @@ bun run identicon -- \
   --out identicon.svg
 ```
 
-Without `--out`, the generated SVG is written to standard output. JSON input is also supported with `--json`, and a different asset root can be supplied with `--assets`.
+Without `--out`, the SVG is written to standard output. JSON input is supported with `--json`, and a different asset root can be supplied with `--assets`.
 
 ## Output
 
@@ -188,44 +199,8 @@ Every generated identicon is:
 - restricted to three reduced `#RGB` colours;
 - free of raster images and external asset references;
 - labelled with accessible and machine-readable SVG metadata;
-- equipped with an exactly recoverable seed and six-sign protected payload.
-
-## Project structure
-
-```text
-.github/workflows/       GitHub Pages deployment
-assets/                  constellation, star and zodiac SVG assets
-config/                  palette target and tuned nonce configuration
-examples/                generated example output
-public/                  responsive web interface
-scripts/
-  build-pages.ts         self-contained static-site build
-  tune-palette.ts        exact or nearest palette nonce search
-src/
-  build.ts               shared SVG renderer
-  camera.ts              bounded high-resolution camera startup
-  code-layout.ts         coded-star and registration geometry
-  layout.ts              ring and inner-grid geometry
-  opencv.ts              dependency-free local edge and quality analysis
-  palette.ts             64-entry visual palette codebook
-  palette-nonce.ts       nonce selection for every seed
-  prng.ts                SHA-256 counter-mode deterministic PRNG
-  rs.ts                  Reed-Solomon encoding and erasure recovery
-  scan.ts                cumulative camera and photo scanner orchestration
-  scan-colour.ts         colour clustering and orientation recovery
-  scan-cv.ts             local paired-ring detection and normalisation
-  scan-seed.ts           complete protected-payload decoding
-  scan-series.ts         rolling multi-frame evidence fusion
-  scan-sign.ts           general constellation and glyph classification
-  scan-verify.ts         fast expected-element verification
-  seed.ts                exact seed, sign payload and star-symbol mapping
-  sha256.ts              synchronous SHA-256 implementation
-  cli.ts                 command-line interface
-  server.ts              Bun web server
-  web.ts                 browser controls and preview
-  xml.ts                 SVG parsing and rewriting
-tests/                   deterministic, recovery and deployment-regression tests
-```
+- equipped with an exactly recoverable seed and six-sign payload;
+- protected by glyph-distributed data and parity-only stars.
 
 ## Checks
 
