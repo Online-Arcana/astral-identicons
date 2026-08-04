@@ -18,7 +18,10 @@ export type PlanetaryGlyph = (typeof planetaryGlyphs)[number];
 export type PlanetaryKey = PlanetaryGlyph["key"];
 
 export const planetCount = planetaryGlyphs.length;
-export const planetAnchorCount = 256;
+export const planetAnchorGroupCount = 18;
+export const planetAnchorPositionCount = 16;
+export const planetAnchorCount =
+  planetAnchorGroupCount * planetAnchorPositionCount;
 export const planetRotationLevelCount = 12;
 export const planetSizeLevelCount = 6;
 export const planetDensityLevelCount = 6;
@@ -32,10 +35,46 @@ export const planetLocalStateCount =
   planetDensityLevelCount *
   satelliteConfigurationCount;
 
+export function planetAnchorGroup(anchor: number): number {
+  if (!Number.isInteger(anchor) || anchor < 0 || anchor >= planetAnchorCount) {
+    throw new Error(`planet anchor must be between 0 and ${planetAnchorCount - 1}`);
+  }
+  return Math.floor(anchor / planetAnchorPositionCount);
+}
+
+export function planetAnchorPosition(anchor: number): number {
+  planetAnchorGroup(anchor);
+  return anchor % planetAnchorPositionCount;
+}
+
+export function planetAnchor(group: number, position: number): number {
+  if (
+    !Number.isInteger(group) ||
+    group < 0 ||
+    group >= planetAnchorGroupCount
+  ) {
+    throw new Error(
+      `planet anchor group must be between 0 and ${planetAnchorGroupCount - 1}`
+    );
+  }
+  if (
+    !Number.isInteger(position) ||
+    position < 0 ||
+    position >= planetAnchorPositionCount
+  ) {
+    throw new Error(
+      `planet anchor position must be between 0 and ${planetAnchorPositionCount - 1}`
+    );
+  }
+  return group * planetAnchorPositionCount + position;
+}
+
 if (planetCount !== 11) {
   throw new Error("v9 requires exactly eleven identity-bearing planetary glyphs");
 }
-
+if (planetAnchorCount !== 288) {
+  throw new Error("v9 requires eighteen separated groups of sixteen anchors");
+}
 if (planetLocalStateCount !== 51_840) {
   throw new Error("v9 planetary local-state capacity is inconsistent");
 }
