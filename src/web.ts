@@ -3,7 +3,12 @@ import { buildIdenticon } from "./build.ts";
 import { palette } from "./palette.ts";
 import { Scanner } from "./scan.ts";
 import { seedPaletteIndex } from "./seed.ts";
-import { isPublicKey } from "./seed-value.ts";
+import {
+  base64Url,
+  bindPublicKey,
+  boundPublicKey,
+  isPublicKey
+} from "./seed-value.ts";
 import { label, signs, type Sign } from "./sign.ts";
 import type { AssetSource, IdenticonInput } from "./types.ts";
 
@@ -61,6 +66,7 @@ const assetCache = new Map<string, Promise<string>>();
 let renderVersion = 0;
 let latestSvg = "";
 let assetsWarmed = false;
+let activeRaw: Uint8Array | undefined;
 
 for (const [name, title] of fields) {
   const wrapper = document.createElement("div");
@@ -88,8 +94,7 @@ for (const [name, title] of fields) {
 
 function value(): IdenticonInput {
   const data = new FormData(form);
-
-  return {
+  const result: IdenticonInput = {
     seed: String(data.get("seed") ?? "").trim(),
     solar: String(data.get("solar")) as Sign,
     lunar: String(data.get("lunar")) as Sign,
@@ -98,9 +103,15 @@ function value(): IdenticonInput {
     descendant: String(data.get("descendant")) as Sign,
     imumCoeli: String(data.get("imumCoeli")) as Sign
   };
+
+  if (activeRaw && base64Url(activeRaw) === result.seed) {
+    return bindPublicKey(result, activeRaw);
+  }
+  return result;
 }
 
 function apply(value: IdenticonInput): void {
+  activeRaw = boundPublicKey(value);
   seedField.value = value.seed;
 
   for (const [name] of fields) {
@@ -250,7 +261,13 @@ const scanner = new Scanner({
   }
 });
 
-form.addEventListener("input", schedule);
+form.addEventListener("input", (event) => {
+  if (event.target === seedField) {
+    activeRaw = undefined;
+    astralFile.value = "";
+  }
+  schedule();
+});
 
 astralFile.addEventListener("change", () => {
   const selected = astralFile.files?.[0];
@@ -280,6 +297,7 @@ function randomSeed(): string {
 }
 
 randomButton.addEventListener("click", () => {
+  activeRaw = undefined;
   seedField.value = randomSeed();
   astralFile.value = "";
   schedule();
