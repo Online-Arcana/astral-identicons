@@ -8,7 +8,7 @@ import {
   pixel
 } from "./scan-colour.ts";
 
-type Role = keyof Omit<IdenticonInput, "seed" | "seedKind">;
+type Role = keyof Omit<IdenticonInput, "seed">;
 
 interface VerificationItem {
   role: Role;
@@ -31,7 +31,6 @@ export interface SignVerification {
 
 const placeholder: IdenticonInput = {
   seed: "verification-layout",
-  seedKind: "text",
   solar: "aries",
   lunar: "aries",
   ascendant: "aries",
