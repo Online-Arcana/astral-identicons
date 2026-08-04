@@ -554,6 +554,7 @@ export class Scanner {
     this.#progress.setAttribute("aria-valuenow", "0");
     this.#progressFill.style.inlineSize = "0%";
     this.#progressText.textContent = "";
+    this.#progressText.style.color = "#c7c7d6";
   }
 
   private scheduleAutomatic(delay = automaticInterval): void {
@@ -728,6 +729,7 @@ export class Scanner {
     }
 
     for (let index = 0; index < centreRegions.length; index += 1) {
+      if (!(frame.quality.centre[index] ?? false)) continue;
       const score = frame.quality.centreScores[index] ?? 0;
       if (score <= this.#centreMosaicScores[index]!) continue;
       this.#centreMosaicScores[index] = score;
@@ -736,6 +738,7 @@ export class Scanner {
     }
 
     for (let index = 0; index < ringRegions.length; index += 1) {
+      if (!(frame.quality.ring[index] ?? false)) continue;
       const score = frame.quality.ringScores[index] ?? 0;
       if (score <= this.#ringMosaicScores[index]!) continue;
       this.#ringMosaicScores[index] = score;
@@ -942,6 +945,7 @@ export class Scanner {
     }
 
     this.stopCamera();
+    this.#processing = false;
     this.showProgress(100, value);
     this.#progressText.style.color = "#ff9eaa";
     this.message(value, "error");
