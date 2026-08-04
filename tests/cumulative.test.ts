@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { input } from "../src/input.ts";
-import { CaptureSeries } from "../src/scan-series.ts";
+import { CaptureSeries, type CaptureSnapshot } from "../src/scan-series.ts";
 import { encodedSeedNibbles } from "../src/seed.ts";
 
 const sample = input({
@@ -62,7 +62,7 @@ describe("cumulative scanner capture", () => {
       }
     ] as const;
 
-    let snapshot;
+    let snapshot: CaptureSnapshot | undefined;
 
     for (const frame of frames) {
       snapshot = series.add({
@@ -71,13 +71,14 @@ describe("cumulative scanner capture", () => {
       });
     }
 
-    expect(snapshot).toBeDefined();
-    expect(snapshot!.ready).toBe(true);
-    expect(snapshot!.frames).toBe(5);
-    expect(snapshot!.elapsed).toBe(2_400);
-    expect(snapshot!.observedStars).toBe(128);
-    expect(snapshot!.centreFound).toBe(9);
-    expect(snapshot!.ringFound).toBe(12);
-    expect(snapshot!.reading?.value).toEqual(sample);
+    if (!snapshot) throw new Error("capture series did not produce a snapshot");
+
+    expect(snapshot.ready).toBe(true);
+    expect(snapshot.frames).toBe(5);
+    expect(snapshot.elapsed).toBe(2_400);
+    expect(snapshot.observedStars).toBe(128);
+    expect(snapshot.centreFound).toBe(9);
+    expect(snapshot.ringFound).toBe(12);
+    expect(snapshot.reading?.value).toEqual(sample);
   });
 });
