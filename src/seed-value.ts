@@ -1,4 +1,4 @@
-import type { IdenticonInput, SeedKind } from "./types.ts";
+import type { IdenticonInput } from "./types.ts";
 
 const encoder = new TextEncoder();
 const keyPattern = /^[A-Za-z0-9_-]{43}$/u;
@@ -25,8 +25,17 @@ export function rawPublicKey(value: string): Uint8Array {
   return bytes;
 }
 
-export function seedBytes(value: Pick<IdenticonInput, "seed" | "seedKind">): Uint8Array {
-  if (value.seedKind === "ed25519") return rawPublicKey(value.seed);
+export function isPublicKey(value: string): boolean {
+  if (!keyPattern.test(value)) return false;
+  try {
+    return base64Url(rawPublicKey(value)) === value;
+  } catch {
+    return false;
+  }
+}
+
+export function seedBytes(value: Pick<IdenticonInput, "seed">): Uint8Array {
+  if (isPublicKey(value.seed)) return rawPublicKey(value.seed);
   if (value.seed.length === 0) throw new Error("seed must be a non-empty string");
   if (value.seed.trim() !== value.seed) {
     throw new Error("seed must not contain leading or trailing whitespace");
@@ -34,17 +43,11 @@ export function seedBytes(value: Pick<IdenticonInput, "seed" | "seedKind">): Uin
 
   const bytes = encoder.encode(value.seed);
   if (bytes.length > 32) {
-    throw new Error("seed must contain at most 32 UTF-8 bytes so it can be recovered exactly");
+    throw new Error("seed must contain at most 32 UTF-8 bytes or be a 32-byte Ed25519 public key");
   }
   return bytes;
 }
 
-export function seedKind(value: unknown): SeedKind {
-  if (value === undefined || value === null || value === "") return "text";
-  if (value === "text" || value === "ed25519") return value;
-  throw new Error("seedKind must be text or ed25519");
-}
-
 export function seedMaterial(value: IdenticonInput): string | Uint8Array {
-  return value.seedKind === "text" ? value.seed : seedBytes(value);
+  return isPublicKey(value.seed) ? rawPublicKey(value.seed) : value.seed;
 }
