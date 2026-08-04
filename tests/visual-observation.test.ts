@@ -1,7 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { codeSymbolPoint } from "../src/code-layout.ts";
+import {
+  codeSymbolPoint,
+  northStar,
+  northStarPoint
+} from "../src/code-layout.ts";
 import { input } from "../src/input.ts";
-import type { ObservedPalette } from "../src/scan-colour.ts";
+import type { ObservedPalette, Rgb } from "../src/scan-colour.ts";
 import {
   observeStarParity,
   observeStarParitySlot
@@ -52,17 +56,19 @@ function setPixel(
   target: PixelImage,
   x: number,
   y: number,
-  intensity: number
+  colour: Rgb,
+  opacity: number,
+  exposure: number
 ): void {
   const column = Math.round(x);
   const row = Math.round(y);
   if (column < 0 || row < 0 || column >= target.width || row >= target.height) return;
 
   const offset = (row * target.width + column) * 4;
-  const value = Math.max(0, Math.min(255, Math.round(intensity)));
-  target.data[offset] = Math.max(target.data[offset]!, value);
-  target.data[offset + 1] = Math.max(target.data[offset + 1]!, value);
-  target.data[offset + 2] = Math.max(target.data[offset + 2]!, value);
+  const factor = Math.max(0, Math.min(1, opacity * exposure));
+  target.data[offset] = Math.max(target.data[offset]!, colour.r * factor);
+  target.data[offset + 1] = Math.max(target.data[offset + 1]!, colour.g * factor);
+  target.data[offset + 2] = Math.max(target.data[offset + 2]!, colour.b * factor);
 }
 
 function disc(
@@ -70,14 +76,23 @@ function disc(
   x: number,
   y: number,
   radius: number,
-  intensity: number
+  colour: Rgb,
+  opacity: number,
+  exposure: number
 ): void {
   const bound = Math.ceil(radius);
 
   for (let offsetY = -bound; offsetY <= bound; offsetY += 1) {
     for (let offsetX = -bound; offsetX <= bound; offsetX += 1) {
       if (offsetX * offsetX + offsetY * offsetY > radius * radius) continue;
-      setPixel(target, x + offsetX, y + offsetY, intensity);
+      setPixel(
+        target,
+        x + offsetX,
+        y + offsetY,
+        colour,
+        opacity,
+        exposure
+      );
     }
   }
 }
@@ -89,7 +104,9 @@ function line(
   endX: number,
   endY: number,
   width: number,
-  intensity: number
+  colour: Rgb,
+  opacity: number,
+  exposure: number
 ): void {
   const length = Math.hypot(endX - startX, endY - startY);
   const steps = Math.max(1, Math.ceil(length * 2));
@@ -101,7 +118,9 @@ function line(
       startX + (endX - startX) * amount,
       startY + (endY - startY) * amount,
       width / 2,
-      intensity
+      colour,
+      opacity,
+      exposure
     );
   }
 }
@@ -115,12 +134,21 @@ function drawStar(
   x: number,
   y: number,
   size: number,
-  opacity: number
+  colour: Rgb,
+  opacity: number,
+  exposure: number
 ): void {
   const radius = size / 2;
-  const intensity = opacity * 255;
 
-  disc(target, x, y, Math.max(1.7, size * 0.11), intensity);
+  disc(
+    target,
+    x,
+    y,
+    Math.max(1.7, size * 0.11),
+    colour,
+    opacity,
+    exposure
+  );
 
   for (let spoke = 0; spoke < 8; spoke += 1) {
     const angle = spoke / 8 * Math.PI * 2;
@@ -131,26 +159,57 @@ function drawStar(
       x + Math.cos(angle) * radius,
       y + Math.sin(angle) * radius,
       Math.max(1.4, size * 0.08),
-      intensity
+      colour,
+      opacity,
+      exposure
     );
   }
 }
 
-describe("rendered recovery stars", () => {
-  test("reads position, size and intensity for every size level", () => {
+function drawNorthStar(
+  target: PixelImage,
+  exposure: number
+): void {
+  const scale = target.width / 1024;
+  const point = northStarPoint();
+
+  drawStar(
+    target,
+    point.x * scale,
+    point.y * scale,
+    northStar.size * scale,
+    palette.layer0,
+    northStar.opacity,
+    exposure
+  );
+}
+
+describe("rendered parity stars", () => {
+  test("reads every size and opacity level relative to the invariant North Star", () => {
     const codeword = starParityCodeword(sample);
-    const tested: number[] = [];
+    const sizes = new Set<number>();
+    const opacities = new Set<number>();
 
-    for (let sizeLevel = 0; sizeLevel < 4; sizeLevel += 1) {
-      const slot = [...codeword].findIndex((byte, index) => {
-        return index > 2 && ((byte & 0x0f) >>> 2) === sizeLevel;
-      });
-      if (slot < 0) continue;
-
+    for (let slot = 0; slot < codeword.length; slot += 1) {
       const symbol = starVisualSymbol(codeword[slot]!);
+      if (sizes.has(symbol.sizeLevel) && opacities.has(symbol.opacityLevel)) continue;
+
       const point = codeSymbolPoint(slot, symbol.position);
+      const north = northStarPoint();
+      if (Math.hypot(point.x - north.x, point.y - north.y) < 55) continue;
+
       const pixels = image();
-      drawStar(pixels, point.x, point.y, symbol.size, symbol.opacity);
+      const exposure = 0.78;
+      drawStar(
+        pixels,
+        point.x,
+        point.y,
+        symbol.size,
+        palette.layer1,
+        symbol.opacity,
+        exposure
+      );
+      drawNorthStar(pixels, exposure);
 
       const observation = observeStarParitySlot(
         asImageData(pixels),
@@ -159,17 +218,24 @@ describe("rendered recovery stars", () => {
       );
 
       expect(observation.value).toBe(codeword[slot]!);
-      expect(observation.confidence > 0).toBe(true);
-      tested.push(sizeLevel);
+      expect(observation.positionConfidence > 0).toBe(true);
+      expect(observation.sizeConfidence > 0).toBe(true);
+      expect(observation.opacityConfidence > 0).toBe(true);
+      sizes.add(symbol.sizeLevel);
+      opacities.add(symbol.opacityLevel);
+
+      if (sizes.size === 4 && opacities.size === 4) break;
     }
 
-    expect(tested.length).toBe(4);
+    expect(sizes.size).toBe(4);
+    expect(opacities.size).toBe(4);
   });
 
-  test("reads enough stars from the complete 512-pixel field to reconstruct", () => {
+  test("reconstructs from a complete 512-pixel field under reduced exposure", () => {
     const codeword = starParityCodeword(sample);
     const pixels = image(512);
     const scale = pixels.width / 1024;
+    const exposure = 0.76;
 
     for (let slot = 0; slot < codeword.length; slot += 1) {
       const symbol = starVisualSymbol(codeword[slot]!);
@@ -179,9 +245,12 @@ describe("rendered recovery stars", () => {
         point.x * scale,
         point.y * scale,
         symbol.size * scale,
-        symbol.opacity
+        palette.layer1,
+        symbol.opacity,
+        exposure
       );
     }
+    drawNorthStar(pixels, exposure);
 
     const observations = observeStarParity(asImageData(pixels), palette);
     const exact = observations.filter((observation, slot) => {
