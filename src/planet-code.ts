@@ -3,8 +3,8 @@ import {
   planetAnchorCount,
   planetAnchorGroup,
   planetAnchorGroupCount,
+  planetAnchorGroupSize,
   planetAnchorPosition,
-  planetAnchorPositionCount,
   planetCount,
   planetDensityLevelCount,
   planetaryGlyphs,
@@ -54,7 +54,10 @@ export interface PlanetaryIdentityCandidate {
 const identityByteCount = 32;
 const identitySpace = 1n << 256n;
 const localRadix = BigInt(planetLocalStateCount);
-const anchorPositionRadix = BigInt(planetAnchorPositionCount);
+const allPlanetGroups = Array.from(
+  { length: planetAnchorGroupCount },
+  (_unused, group) => group
+);
 
 export function permutationCount(total: number, selected: number): bigint {
   if (!Number.isInteger(total) || !Number.isInteger(selected)) {
@@ -63,7 +66,6 @@ export function permutationCount(total: number, selected: number): bigint {
   if (total < 0 || selected < 0 || selected > total) {
     throw new Error("permutation dimensions are invalid");
   }
-
   let result = 1n;
   for (let index = 0; index < selected; index += 1) {
     result *= BigInt(total - index);
@@ -71,14 +73,43 @@ export function permutationCount(total: number, selected: number): bigint {
   return result;
 }
 
-export const planetGroupPermutationSpace = permutationCount(
-  planetAnchorGroupCount,
+function factorial(value: number): bigint {
+  let result = 1n;
+  for (let factor = 2; factor <= value; factor += 1) {
+    result *= BigInt(factor);
+  }
+  return result;
+}
+
+/**
+ * Counts ordered selections of distinct macro-groups while weighting each
+ * selected group by the number of scannable micro-anchors it contains.
+ */
+export function weightedPlanetLocationCount(
+  groups: readonly number[],
+  selected: number
+): bigint {
+  if (!Number.isInteger(selected) || selected < 0 || selected > groups.length) {
+    throw new Error("weighted location dimensions are invalid");
+  }
+  const elementary = Array<bigint>(selected + 1).fill(0n);
+  elementary[0] = 1n;
+  let available = 0;
+  for (const group of groups) {
+    const size = BigInt(planetAnchorGroupSize(group));
+    available += 1;
+    const maximum = Math.min(selected, available);
+    for (let count = maximum; count >= 1; count -= 1) {
+      elementary[count] += elementary[count - 1]! * size;
+    }
+  }
+  return elementary[selected]! * factorial(selected);
+}
+
+export const planetLocationSpace = weightedPlanetLocationCount(
+  allPlanetGroups,
   planetCount
 );
-export const planetAnchorPositionSpace =
-  anchorPositionRadix ** BigInt(planetCount);
-export const planetLocationSpace =
-  planetGroupPermutationSpace * planetAnchorPositionSpace;
 export const planetLocalSpace = localRadix ** BigInt(planetCount);
 export const planetaryConfigurationSpace =
   planetLocationSpace * planetLocalSpace;
@@ -109,11 +140,9 @@ function unrankPermutation(
   if (value < 0n || value >= capacity) {
     throw new Error("permutation rank is outside its configuration space");
   }
-
   const available = Array.from({ length: total }, (_unused, index) => index);
   const result: number[] = [];
   let rank = value;
-
   for (let index = 0; index < selected; index += 1) {
     const remaining = selected - index - 1;
     const block = permutationCount(total - index - 1, remaining);
@@ -136,10 +165,8 @@ function rankPermutation(
   if (values.length !== selected) {
     throw new Error(`permutation must contain exactly ${selected} values`);
   }
-
   const available = Array.from({ length: total }, (_unused, index) => index);
   let result = 0n;
-
   for (let index = 0; index < values.length; index += 1) {
     const value = values[index]!;
     integer(value, 0, total - 1, "permutation value");
@@ -153,26 +180,48 @@ function rankPermutation(
   return result;
 }
 
+function groupsWithout(groups: readonly number[], index: number): number[] {
+  return [...groups.slice(0, index), ...groups.slice(index + 1)];
+}
+
 function unrankLocations(value: bigint): readonly number[] {
   if (value < 0n || value >= planetLocationSpace) {
     throw new Error("planet location rank is outside its configuration space");
   }
 
-  const groupRank = value % planetGroupPermutationSpace;
-  let positionRank = value / planetGroupPermutationSpace;
-  const groups = unrankPermutation(
-    groupRank,
-    planetAnchorGroupCount,
-    planetCount
-  );
-  const anchors = groups.map((group) => {
-    const position = Number(positionRank % anchorPositionRadix);
-    positionRank /= anchorPositionRadix;
-    return planetAnchor(group, position);
-  });
+  const available = [...allPlanetGroups];
+  const anchors: number[] = [];
+  let rank = value;
 
-  if (positionRank !== 0n) {
-    throw new Error("planet position rank exceeded its configuration space");
+  for (let index = 0; index < planetCount; index += 1) {
+    const remaining = planetCount - index - 1;
+    let chosen = -1;
+
+    for (let candidate = 0; candidate < available.length; candidate += 1) {
+      const group = available[candidate]!;
+      const rest = groupsWithout(available, candidate);
+      const future = weightedPlanetLocationCount(rest, remaining);
+      const block = BigInt(planetAnchorGroupSize(group)) * future;
+      if (rank >= block) {
+        rank -= block;
+        continue;
+      }
+
+      const position = Number(rank / future);
+      rank %= future;
+      anchors.push(planetAnchor(group, position));
+      chosen = candidate;
+      break;
+    }
+
+    if (chosen < 0) {
+      throw new Error("planet location rank could not select a separated group");
+    }
+    available.splice(chosen, 1);
+  }
+
+  if (rank !== 0n) {
+    throw new Error("planet location rank exceeded its configuration space");
   }
   return anchors;
 }
@@ -182,19 +231,34 @@ function rankLocations(anchors: readonly number[]): bigint {
     throw new Error(`planet locations must contain exactly ${planetCount} anchors`);
   }
 
-  const groups = anchors.map(planetAnchorGroup);
-  const groupRank = rankPermutation(
-    groups,
-    planetAnchorGroupCount,
-    planetCount
-  );
-  let positionRank = 0n;
-  let multiplier = 1n;
-  for (const anchor of anchors) {
-    positionRank += BigInt(planetAnchorPosition(anchor)) * multiplier;
-    multiplier *= anchorPositionRadix;
+  const available = [...allPlanetGroups];
+  let result = 0n;
+
+  for (let index = 0; index < anchors.length; index += 1) {
+    const anchor = anchors[index]!;
+    const selectedGroup = planetAnchorGroup(anchor);
+    const selectedPosition = planetAnchorPosition(anchor);
+    const remaining = planetCount - index - 1;
+    const selectedIndex = available.indexOf(selectedGroup);
+    if (selectedIndex < 0) {
+      throw new Error("all eleven planetary anchor groups must be distinct");
+    }
+
+    for (let candidate = 0; candidate < selectedIndex; candidate += 1) {
+      const group = available[candidate]!;
+      const rest = groupsWithout(available, candidate);
+      const future = weightedPlanetLocationCount(rest, remaining);
+      result += BigInt(planetAnchorGroupSize(group)) * future;
+    }
+
+    const future = weightedPlanetLocationCount(
+      groupsWithout(available, selectedIndex),
+      remaining
+    );
+    result += BigInt(selectedPosition) * future;
+    available.splice(selectedIndex, 1);
   }
-  return positionRank * planetGroupPermutationSpace + groupRank;
+  return result;
 }
 
 function bytesToInteger(bytes: Uint8Array): bigint {
@@ -232,12 +296,7 @@ function encodeSatellites(value: SatelliteState): number {
 }
 
 function decodeSatellites(value: number): SatelliteState {
-  integer(
-    value,
-    0,
-    satelliteConfigurationCount - 1,
-    "satellite configuration"
-  );
+  integer(value, 0, satelliteConfigurationCount - 1, "satellite configuration");
   const positions = unrankPermutation(
     BigInt(value),
     satellitePositionCount,
