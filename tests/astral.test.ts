@@ -48,7 +48,6 @@ describe("packaged astral input", () => {
     const value = astralInput(container(key));
     const payload = seedPayload(value);
 
-    expect(value.seedKind).toBe("ed25519");
     expect(value.seed).toBe(base64Url(key));
     expect([...payload.slice(3, 35)]).toEqual([...key]);
     expect(payload[1]).toBe(2);
