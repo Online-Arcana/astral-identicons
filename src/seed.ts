@@ -1,7 +1,13 @@
 import { paletteNonce } from "./palette-nonce.ts";
 import { paletteDraw } from "./prng.ts";
 import { rsEncode, rsRecoverErasures, rsValid } from "./rs.ts";
-import { base64Url, isPublicKey, seedBytes, seedMaterial } from "./seed-value.ts";
+import {
+  base64Url,
+  bindPublicKey,
+  isPublicSeed,
+  seedBytes,
+  seedMaterial
+} from "./seed-value.ts";
 import { signs, type Sign } from "./sign.ts";
 import type { IdenticonInput } from "./types.ts";
 
@@ -109,7 +115,7 @@ export function seedPayload(value: IdenticonInput): Uint8Array {
   const result = new Uint8Array(seedDataByteCount);
 
   result[0] = payloadMagic;
-  result[1] = isPublicKey(value.seed) ? keyPayloadVersion : textPayloadVersion;
+  result[1] = isPublicSeed(value) ? keyPayloadVersion : textPayloadVersion;
   result[2] = bytes.length;
   result.set(bytes, payloadSeedOffset);
   result.set(packedSigns(value), payloadSignsOffset);
@@ -220,8 +226,7 @@ function decodedPayload(data: Uint8Array): IdenticonInput {
   const first = data[payloadSignsOffset]!;
   const second = data[payloadSignsOffset + 1]!;
   const third = data[payloadSignsOffset + 2]!;
-
-  return {
+  const value: IdenticonInput = {
     seed,
     solar: unpackSign(first >>> 4),
     lunar: unpackSign(first & 0x0f),
@@ -230,6 +235,8 @@ function decodedPayload(data: Uint8Array): IdenticonInput {
     descendant: unpackSign(third >>> 4),
     imumCoeli: unpackSign(third & 0x0f)
   };
+
+  return version === keyPayloadVersion ? bindPublicKey(value, bytes) : value;
 }
 
 export function decodeSeedCodeword(codeword: Uint8Array): IdenticonInput {
