@@ -93,15 +93,20 @@ function apply(value: IdenticonInput): void {
   }
 }
 
+function assetPath(path: string): string {
+  return new URL(path.replace(/^\/+/, ""), document.baseURI).href;
+}
+
 function getAsset(path: string): Promise<string> {
-  let request = assetCache.get(path);
+  const resolved = assetPath(path);
+  let request = assetCache.get(resolved);
 
   if (!request) {
-    request = fetch(path).then(async (response) => {
-      if (!response.ok) throw new Error(`Could not load asset: ${path}`);
+    request = fetch(resolved).then(async (response) => {
+      if (!response.ok) throw new Error(`Could not load asset: ${resolved}`);
       return response.text();
     });
-    assetCache.set(path, request);
+    assetCache.set(resolved, request);
   }
 
   return request;
@@ -112,10 +117,10 @@ function warmAssets(): void {
   assetsWarmed = true;
 
   const requests = [
-    getAsset("/assets/decor/star.svg"),
+    getAsset("assets/decor/star.svg"),
     ...signs.flatMap((sign) => [
-      getAsset(`/assets/constellations/${sign}.svg`),
-      getAsset(`/assets/sigils/${sign}.svg`)
+      getAsset(`assets/constellations/${sign}.svg`),
+      getAsset(`assets/sigils/${sign}.svg`)
     ])
   ];
 
@@ -125,9 +130,9 @@ function warmAssets(): void {
 }
 
 const browserAssets: AssetSource = {
-  constellation: (sign) => getAsset(`/assets/constellations/${sign}.svg`),
-  sigil: (sign) => getAsset(`/assets/sigils/${sign}.svg`),
-  star: () => getAsset("/assets/decor/star.svg")
+  constellation: (sign) => getAsset(`assets/constellations/${sign}.svg`),
+  sigil: (sign) => getAsset(`assets/sigils/${sign}.svg`),
+  star: () => getAsset("assets/decor/star.svg")
 };
 
 function showPalette(valuePalette: ReturnType<typeof palette>): void {
@@ -194,7 +199,7 @@ async function render(): Promise<void> {
   showPalette(palette(data.seed));
 
   const paletteIndex = seedPaletteIndex(data.seed);
-  status.textContent = `The exact seed and all six signs are encoded in the correction stars. Palette ${paletteIndex.toString(16).padStart(2, "0").toUpperCase()} and the duplicate glyphs provide independent recognition evidence.`;
+  status.textContent = `The exact seed and all six signs are distributed across the glyph carriers. The parity stars repair missing or ambiguous glyph bytes. Palette ${paletteIndex.toString(16).padStart(2, "0").toUpperCase()}, the constellation and the duplicated signs provide independent recognition evidence.`;
   status.className = "status";
 }
 
@@ -213,8 +218,8 @@ function schedule(): void {
 }
 
 function correctionSummary(bytes: number): string {
-  if (bytes === 0) return "No star bytes required reconstruction.";
-  return `Error correction reconstructed ${bytes} star byte${bytes === 1 ? "" : "s"}.`;
+  if (bytes === 0) return "No glyph bytes needed parity repair.";
+  return `Parity stars repaired ${bytes} glyph data byte${bytes === 1 ? "" : "s"}.`;
 }
 
 const scanner = new Scanner({
@@ -222,7 +227,7 @@ const scanner = new Scanner({
     apply(result);
 
     void render().then(() => {
-      status.textContent = `Camera recovered the exact seed "${result.seed}" and all six signs. ${correctionSummary(result.correctedBytes)}`;
+      status.textContent = `Camera recovered the exact seed "${result.seed}" and all six signs from ${result.cumulativeFrames} useful capture${result.cumulativeFrames === 1 ? "" : "s"}. ${correctionSummary(result.correctedBytes)}`;
       status.className = "status";
     }).catch(showError);
   }
