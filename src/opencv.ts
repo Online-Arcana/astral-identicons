@@ -14,7 +14,7 @@ interface CvSize {
   readonly height: number;
 }
 
-interface CvApi {
+export interface CvApi {
   Mat: new () => CvMat;
   Size: new (width: number, height: number) => CvSize;
   COLOR_RGBA2GRAY: number;
@@ -52,9 +52,7 @@ interface CvApi {
 }
 
 interface CvGlobal {
-  cv?: CvApi | Promise<CvApi> | (Partial<CvApi> & {
-    onRuntimeInitialized?: () => void;
-  });
+  cv?: CvApi | Promise<CvApi>;
 }
 
 export interface FrameQuality {
@@ -64,6 +62,8 @@ export interface FrameQuality {
   edgeDensity: number;
   centre: readonly boolean[];
   ring: readonly boolean[];
+  centreScores: readonly number[];
+  ringScores: readonly number[];
   ready: boolean;
   score: number;
 }
@@ -106,7 +106,7 @@ async function resolveGlobal(): Promise<CvApi | undefined> {
   const value = global.cv;
   if (!value) return undefined;
 
-  if (value instanceof Promise) {
+  if (typeof (value as Promise<CvApi>).then === "function") {
     const resolved = await value;
     return complete(resolved) ? resolved : undefined;
   }
@@ -204,7 +204,9 @@ function exposure(gray: CvMat): number {
   return clamp(1 - clipped / 0.5, 0, 1);
 }
 
-function regionEvidence(edges: CvMat): {
+function regionScores(edges: CvMat): {
+  centreScores: readonly number[];
+  ringScores: readonly number[];
   centre: readonly boolean[];
   ring: readonly boolean[];
 } {
@@ -220,27 +222,32 @@ function regionEvidence(edges: CvMat): {
   const centreThreshold = Math.max(0.0035, global * 0.14);
   const ringThreshold = Math.max(0.0045, global * 0.18);
 
-  const centre = placements(placeholder).map((placement) => {
+  const centreScores = placements(placeholder).map((placement) => {
     return edgeDensity(
       edges,
       placement.x * scaleX,
       placement.y * scaleY,
       placement.size * 1.24 * scaleX,
       placement.size * 1.24 * scaleY
-    ) >= centreThreshold;
+    );
   });
 
-  const ring = ringPlacements(placeholder).map((placement) => {
+  const ringScores = ringPlacements(placeholder).map((placement) => {
     return edgeDensity(
       edges,
       placement.x * scaleX,
       placement.y * scaleY,
       placement.size * 1.55 * scaleX,
       placement.size * 1.55 * scaleY
-    ) >= ringThreshold;
+    );
   });
 
-  return { centre, ring };
+  return {
+    centreScores,
+    ringScores,
+    centre: centreScores.map((value) => value >= centreThreshold),
+    ring: ringScores.map((value) => value >= ringThreshold)
+  };
 }
 
 export function inspectFrame(cv: CvApi, image: ImageData): FrameQuality {
@@ -281,7 +288,7 @@ export function inspectFrame(cv: CvApi, image: ImageData): FrameQuality {
     const contrast = scalar(grayDeviation);
     const exposureScore = exposure(gray);
     const density = cv.countNonZero(edges) / Math.max(1, edges.rows * edges.cols);
-    const regions = regionEvidence(edges);
+    const regions = regionScores(edges);
     const centreCount = regions.centre.filter(Boolean).length;
     const ringCount = regions.ring.filter(Boolean).length;
     const sharpnessScore = clamp((sharpness - 28) / 150, 0, 1);
@@ -306,13 +313,15 @@ export function inspectFrame(cv: CvApi, image: ImageData): FrameQuality {
       edgeDensity: density,
       centre: regions.centre,
       ring: regions.ring,
+      centreScores: regions.centreScores,
+      ringScores: regions.ringScores,
       ready: (
         sharpness >= 36 &&
         contrast >= 14 &&
         exposureScore >= 0.42 &&
         density >= 0.006 &&
-        centreCount >= 5 &&
-        ringCount >= 8
+        centreCount >= 3 &&
+        ringCount >= 5
       ),
       score
     };
