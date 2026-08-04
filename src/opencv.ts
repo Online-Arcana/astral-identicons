@@ -1,4 +1,5 @@
 import { placements, ringPlacements } from "./layout.ts";
+import { RuntimeLoader, type RuntimeEnvironment } from "./runtime-loader.ts";
 import type { IdenticonInput } from "./types.ts";
 
 interface CvMat {
@@ -68,8 +69,7 @@ export interface FrameQuality {
   score: number;
 }
 
-const source = "https://docs.opencv.org/4.12.0/opencv.js";
-const loadTimeout = 25_000;
+const fallbackSource = "https://docs.opencv.org/4.x/opencv.js";
 const placeholder: IdenticonInput = {
   seed: "quality-layout",
   solar: "aries",
@@ -80,77 +80,96 @@ const placeholder: IdenticonInput = {
   imumCoeli: "aries"
 };
 
-let request: Promise<CvApi> | undefined;
-
 function complete(value: unknown): value is CvApi {
   if (!value || typeof value !== "object") return false;
   const candidate = value as Partial<CvApi>;
   return typeof candidate.Mat === "function" && typeof candidate.Canny === "function";
 }
 
-function script(): HTMLScriptElement {
-  const existing = document.querySelector<HTMLScriptElement>("#opencv-runtime");
-  if (existing) return existing;
-
-  const element = document.createElement("script");
-  element.id = "opencv-runtime";
-  element.src = source;
-  element.async = true;
-  element.crossOrigin = "anonymous";
-  document.head.append(element);
-  return element;
+function globalValue(): CvGlobal & typeof globalThis {
+  return globalThis as typeof globalThis & CvGlobal;
 }
 
-async function resolveGlobal(): Promise<CvApi | undefined> {
-  const global = globalThis as typeof globalThis & CvGlobal;
-  const value = global.cv;
-  if (!value) return undefined;
+function configuredSource(): string {
+  const meta = document.querySelector<HTMLMetaElement>(
+    'meta[name="opencv-runtime"]'
+  );
+  const value = meta?.content.trim();
+  return value || fallbackSource;
+}
 
-  if (typeof (value as Promise<CvApi>).then === "function") {
-    const resolved = await value;
-    return complete(resolved) ? resolved : undefined;
+function removeRuntimeScript(): void {
+  document.querySelectorAll<HTMLScriptElement>("#opencv-runtime")
+    .forEach((element) => element.remove());
+}
+
+function clearRuntime(): void {
+  removeRuntimeScript();
+  const global = globalValue();
+
+  try {
+    delete global.cv;
+  } catch {
+    global.cv = undefined;
   }
-
-  return complete(value) ? value : undefined;
 }
+
+const environment: RuntimeEnvironment<CvApi> = {
+  current() {
+    return globalValue().cv;
+  },
+  clear() {
+    clearRuntime();
+  },
+  create(url, loaded, failed) {
+    removeRuntimeScript();
+
+    const element = document.createElement("script");
+    element.id = "opencv-runtime";
+    element.src = url;
+    element.async = true;
+    element.dataset.state = "loading";
+
+    element.addEventListener("load", () => {
+      element.dataset.state = "loaded";
+      loaded();
+    }, { once: true });
+
+    element.addEventListener("error", () => {
+      element.dataset.state = "error";
+      failed(new Error(`OpenCV.js failed to load from ${url}`));
+    }, { once: true });
+
+    document.head.append(element);
+
+    return {
+      remove() {
+        element.remove();
+      }
+    };
+  },
+  now() {
+    return performance.now();
+  },
+  sleep(milliseconds) {
+    return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+  }
+};
+
+const loader = new RuntimeLoader<CvApi>(environment, {
+  url: configuredSource(),
+  ready: complete,
+  attempts: 2,
+  timeoutMilliseconds: 20_000,
+  pollMilliseconds: 40
+});
 
 export function loadOpenCv(): Promise<CvApi> {
-  if (request) return request;
+  return loader.load();
+}
 
-  request = new Promise<CvApi>((resolve, reject) => {
-    const started = performance.now();
-    const element = script();
-
-    const fail = (): void => {
-      reject(new Error("OpenCV.js could not be loaded for scanner quality checks"));
-    };
-
-    element.addEventListener("error", fail, { once: true });
-
-    const poll = async (): Promise<void> => {
-      try {
-        const value = await resolveGlobal();
-        if (value) {
-          resolve(value);
-          return;
-        }
-      } catch (error) {
-        reject(error);
-        return;
-      }
-
-      if (performance.now() - started >= loadTimeout) {
-        fail();
-        return;
-      }
-
-      window.setTimeout(() => void poll(), 40);
-    };
-
-    void poll();
-  });
-
-  return request;
+export function resetOpenCv(): void {
+  loader.reset();
 }
 
 function clamp(value: number, minimum: number, maximum: number): number {
