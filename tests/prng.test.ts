@@ -21,7 +21,7 @@ describe("cryptographic palette PRNG", () => {
     expect(first).toBe(second);
     expect(first).toMatch(/^[0-9a-f]{64}$/u);
     expect(other).toMatch(/^[0-9a-f]{64}$/u);
-    expect(other).not.toBe(first);
+    expect(other === first).toBe(false);
   });
 
   test("tunes the chosen seed through the normal PRNG path", () => {
