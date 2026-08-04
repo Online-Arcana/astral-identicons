@@ -10,6 +10,13 @@ const responsiveViewport =
   'content="width=device-width, initial-scale=1, viewport-fit=cover"';
 const browserEntry = 'src="/app.js"';
 
+function attribute(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("<", "&lt;");
+}
+
 export function page(source: string, assets: PageAssets): string {
   if (!source.includes(lockedViewport)) {
     throw new Error("Could not locate the locked viewport declaration");
@@ -24,14 +31,17 @@ export function page(source: string, assets: PageAssets): string {
   }
 
   const openCv = assets.opencv
-    ? `  <script id="opencv-runtime" src="${assets.opencv}" async></script>\n`
+    ? [
+      `  <meta name="opencv-runtime" content="${attribute(assets.opencv)}">`,
+      `  <link rel="preload" as="script" href="${attribute(assets.opencv)}">`
+    ].join("\n") + "\n"
     : "";
 
   return source
     .replace(lockedViewport, responsiveViewport)
     .replace(
       "</head>",
-      `${openCv}  <link rel="stylesheet" href="${assets.stylesheet}">\n</head>`
+      `${openCv}  <link rel="stylesheet" href="${attribute(assets.stylesheet)}">\n</head>`
     )
-    .replace(browserEntry, `src="${assets.script}"`);
+    .replace(browserEntry, `src="${attribute(assets.script)}"`);
 }

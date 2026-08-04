@@ -28,8 +28,12 @@ describe("responsive page assets", () => {
       '<link rel="stylesheet" href="./responsive.css">'
     );
     expect(result).toContain(
-      '<script id="opencv-runtime" src="./vendor/opencv.hash.js" async></script>'
+      '<meta name="opencv-runtime" content="./vendor/opencv.hash.js">'
     );
+    expect(result).toContain(
+      '<link rel="preload" as="script" href="./vendor/opencv.hash.js">'
+    );
+    expect(result).not.toContain('<script id="opencv-runtime"');
     expect(result).toContain('src="./app.hash.js"');
   });
 
@@ -40,6 +44,19 @@ describe("responsive page assets", () => {
     });
 
     expect(result).not.toContain("opencv-runtime");
+  });
+
+  test("escapes generated asset attributes", () => {
+    const result = page(source, {
+      script: './app.js?x="bad"&y=1',
+      stylesheet: "./responsive.css",
+      opencv: "./vendor/opencv.js?x=1&y=2"
+    });
+
+    expect(result).toContain('src="./app.js?x=&quot;bad&quot;&amp;y=1"');
+    expect(result).toContain(
+      'content="./vendor/opencv.js?x=1&amp;y=2"'
+    );
   });
 
   test("fails when the expected source contract changes", () => {
