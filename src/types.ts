@@ -2,8 +2,6 @@ import type { Sign } from "./sign.ts";
 
 export interface IdenticonInput {
   seed: string;
-  /** Compatibility-only marker used by layout fixtures; seed encoding is inferred from the seed itself. */
-  seedKind?: "text";
   solar: Sign;
   lunar: Sign;
   ascendant: Sign;
