@@ -170,7 +170,7 @@ describe("human cumulative scanner capture", () => {
       at += 100;
     }
 
-    expect(snapshot?.reading).toBeUndefined();
+    expect(snapshot?.reading).toBe(undefined);
 
     for (let frame = 0; frame < 40; frame += 1) {
       snapshot = series.add({
