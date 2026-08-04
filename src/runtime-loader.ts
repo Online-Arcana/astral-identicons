@@ -75,8 +75,12 @@ export class RuntimeLoader<T> {
   }
 
   private async run(): Promise<T> {
-    const existing = await this.resolveCurrent(250);
-    if (existing) return existing;
+    try {
+      const existing = await this.resolveCurrent(250);
+      if (existing) return existing;
+    } catch {
+      // A stale rejected global promise must never poison future loads.
+    }
 
     this.#environment.clear();
     let lastError: unknown = new Error("Runtime did not initialise");
