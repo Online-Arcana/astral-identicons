@@ -13,6 +13,8 @@ export interface NorthStarReference {
   readonly opacity: number;
 }
 
+export type CodeAnchor = NorthStarReference;
+
 const innerGap = 8;
 export const innerClipRadius = innerRingRadius - ringStroke / 2 - innerGap;
 export const codeTrackCount = 4;
@@ -31,6 +33,8 @@ export const northStar: NorthStarReference = {
   opacity: 1
 };
 
+export const codeAnchors: readonly CodeAnchor[] = [northStar];
+
 export function rotatePoint(point: Point, angle: number): Point {
   if (angle === 0) return point;
 
@@ -44,13 +48,17 @@ export function rotatePoint(point: Point, angle: number): Point {
   };
 }
 
-export function northStarPoint(): Point {
-  const radians = (northStar.angle * Math.PI) / 180;
+export function codeAnchorPoint(anchor: CodeAnchor): Point {
+  const radians = (anchor.angle * Math.PI) / 180;
 
   return {
-    x: centre + Math.cos(radians) * northStar.radius,
-    y: centre + Math.sin(radians) * northStar.radius
+    x: centre + Math.cos(radians) * anchor.radius,
+    y: centre + Math.sin(radians) * anchor.radius
   };
+}
+
+export function northStarPoint(): Point {
+  return codeAnchorPoint(northStar);
 }
 
 function codeSlotGeometry(slot: number): {
