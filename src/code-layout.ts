@@ -6,10 +6,11 @@ export interface Point {
   y: number;
 }
 
-export interface CodeAnchor {
-  angle: number;
-  radius: number;
-  size: number;
+export interface NorthStarReference {
+  readonly angle: number;
+  readonly radius: number;
+  readonly size: number;
+  readonly opacity: number;
 }
 
 const innerGap = 8;
@@ -23,11 +24,12 @@ if (!Number.isInteger(codeSectorCount)) {
   throw new Error("seed slots must divide evenly across code tracks");
 }
 
-export const codeAnchors: readonly CodeAnchor[] = [
-  { angle: -90, radius: 374, size: 20 },
-  { angle: 134, radius: 372, size: 16 },
-  { angle: 246, radius: 370, size: 12 }
-] as const;
+export const northStar: NorthStarReference = {
+  angle: -90,
+  radius: 370,
+  size: 28,
+  opacity: 1
+};
 
 export function rotatePoint(point: Point, angle: number): Point {
   if (angle === 0) return point;
@@ -42,12 +44,12 @@ export function rotatePoint(point: Point, angle: number): Point {
   };
 }
 
-export function codeAnchorPoint(anchor: CodeAnchor): Point {
-  const radians = (anchor.angle * Math.PI) / 180;
+export function northStarPoint(): Point {
+  const radians = (northStar.angle * Math.PI) / 180;
 
   return {
-    x: centre + Math.cos(radians) * anchor.radius,
-    y: centre + Math.sin(radians) * anchor.radius
+    x: centre + Math.cos(radians) * northStar.radius,
+    y: centre + Math.sin(radians) * northStar.radius
   };
 }
 
