@@ -16,6 +16,8 @@ interface RankedValue {
   readonly score: number;
 }
 
+const apparentSizePadding = 2;
+
 function clamp(value: number, minimum: number, maximum: number): number {
   return Math.max(minimum, Math.min(maximum, value));
 }
@@ -145,7 +147,8 @@ function lowNibbleObservation(
 
   for (let sizeLevel = 0; sizeLevel < starSizes.length; sizeLevel += 1) {
     for (let opacityLevel = 0; opacityLevel < starOpacities.length; opacityLevel += 1) {
-      const sizeCost = Math.abs(profile.size - starSizes[sizeLevel]!) / 5;
+      const expectedSize = starSizes[sizeLevel]! + apparentSizePadding;
+      const sizeCost = Math.abs(profile.size - expectedSize) / 5;
       const opacityCost = Math.abs(profile.opacity - starOpacities[opacityLevel]!) / 0.16;
       const score = sizeCost + opacityCost;
       const value = (sizeLevel << 2) | opacityLevel;

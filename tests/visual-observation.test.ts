@@ -1,12 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { codeSymbolPoint } from "../src/code-layout.ts";
-import { glyphMarks } from "../src/glyph-code.ts";
 import { input } from "../src/input.ts";
 import type { ObservedPalette } from "../src/scan-colour.ts";
-import { observeGlyphData } from "../src/scan-glyph-code.ts";
-import { observeStarParitySlot } from "../src/scan-star-parity.ts";
-import { seedPayload } from "../src/seed.ts";
 import {
+  observeStarParity,
+  observeStarParitySlot
+} from "../src/scan-star-parity.ts";
+import {
+  recoverStarParity,
   starParityCodeword,
   starVisualSymbol
 } from "../src/star-parity.ts";
@@ -35,9 +36,9 @@ const palette: ObservedPalette = {
   confidence: 1
 };
 
-function image(): PixelImage {
-  const width = 1024;
-  const height = 1024;
+function image(size = 1024): PixelImage {
+  const width = size;
+  const height = size;
   const data = new Uint8ClampedArray(width * height * 4);
 
   for (let index = 0; index < width * height; index += 1) {
@@ -109,20 +110,6 @@ function asImageData(value: PixelImage): ImageData {
   return value as unknown as ImageData;
 }
 
-function drawGlyphData(target: PixelImage): void {
-  for (const mark of glyphMarks(sample)) {
-    line(
-      target,
-      mark.startX,
-      mark.startY,
-      mark.endX,
-      mark.endY,
-      4,
-      255
-    );
-  }
-}
-
 function drawStar(
   target: PixelImage,
   x: number,
@@ -149,19 +136,8 @@ function drawStar(
   }
 }
 
-describe("rendered visual channels", () => {
-  test("reads all systematic payload bytes from rendered glyph marks", () => {
-    const pixels = image();
-    drawGlyphData(pixels);
-
-    const observations = observeGlyphData(asImageData(pixels), palette);
-    const values = observations.map((observation) => observation.value);
-
-    expect(values).toEqual([...seedPayload(sample)]);
-    expect(observations.every((observation) => observation.confidence > 0)).toBe(true);
-  });
-
-  test("reads parity-star byte channels from rendered position, size and intensity", () => {
+describe("rendered recovery stars", () => {
+  test("reads position, size and intensity for every size level", () => {
     const codeword = starParityCodeword(sample);
     const tested: number[] = [];
 
@@ -188,5 +164,32 @@ describe("rendered visual channels", () => {
     }
 
     expect(tested.length).toBe(4);
+  });
+
+  test("reads enough stars from the complete 512-pixel field to reconstruct", () => {
+    const codeword = starParityCodeword(sample);
+    const pixels = image(512);
+    const scale = pixels.width / 1024;
+
+    for (let slot = 0; slot < codeword.length; slot += 1) {
+      const symbol = starVisualSymbol(codeword[slot]!);
+      const point = codeSymbolPoint(slot, symbol.position);
+      drawStar(
+        pixels,
+        point.x * scale,
+        point.y * scale,
+        symbol.size * scale,
+        symbol.opacity
+      );
+    }
+
+    const observations = observeStarParity(asImageData(pixels), palette);
+    const exact = observations.filter((observation, slot) => {
+      return observation.value === codeword[slot];
+    }).length;
+    const recovered = recoverStarParity(observations);
+
+    expect(exact >= 40).toBe(true);
+    expect(recovered.value).toEqual(sample);
   });
 });

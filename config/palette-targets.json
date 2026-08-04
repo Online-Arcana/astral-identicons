@@ -11,6 +11,16 @@
       "nonce": "b469817f9522ea7443a965d5fbfa763f54c08938a35f7a80fcc13b347afe6e1a",
       "paletteIndex": 40,
       "distance": 0
+    },
+    "Kcgr43Hr1qJgeG7ICVVq4yAEzGvnGMkBrRdSQ0f4Z0I": {
+      "target": {
+        "background": "#133",
+        "layer0": "#DE6",
+        "layer1": "#6E7"
+      },
+      "nonce": "a13bb281bb449881d5086bb4f42c4d50844721d5349c9256fe6240c337400e6a",
+      "paletteIndex": 21,
+      "distance": 0
     }
   }
 }

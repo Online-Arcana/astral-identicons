@@ -24,11 +24,25 @@ for (const [seed, value] of Object.entries(config.targets)) {
   }
 }
 
-export function paletteNonce(seed: string | Uint8Array): string {
-  if (typeof seed === "string") return config.targets[seed]?.nonce ?? defaultNonce(seed);
-  return defaultNonce(seed);
+function base64Url(value: Uint8Array): string {
+  let raw = "";
+  for (const byte of value) raw += String.fromCharCode(byte);
+  return btoa(raw)
+    .replaceAll("+", "-")
+    .replaceAll("/", "_")
+    .replace(/=+$/u, "");
 }
 
-export function configuredPaletteNonce(seed: string): string | undefined {
-  return config.targets[seed]?.nonce;
+function configurationKey(seed: string | Uint8Array): string {
+  return typeof seed === "string" ? seed : base64Url(seed);
+}
+
+export function paletteNonce(seed: string | Uint8Array): string {
+  return config.targets[configurationKey(seed)]?.nonce ?? defaultNonce(seed);
+}
+
+export function configuredPaletteNonce(
+  seed: string | Uint8Array
+): string | undefined {
+  return config.targets[configurationKey(seed)]?.nonce;
 }

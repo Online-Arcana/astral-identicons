@@ -20,13 +20,12 @@ import {
 } from "./scan-colour.ts";
 import { inspectFrame, loadOpenCv, type FrameQuality } from "./opencv.ts";
 import { canvas as layoutCanvas, placements, ringPlacements } from "./layout.ts";
-import { observeGlyphData } from "./scan-glyph-code.ts";
 import { observeStarParity } from "./scan-star-parity.ts";
 import {
   verifyExpectedSigns,
   type SignVerification
 } from "./scan-verify.ts";
-import { seedPaletteIndex } from "./seed.ts";
+import { seedDataByteCount, seedPaletteIndex, seedSlotCount } from "./seed.ts";
 import type { ByteObservation } from "./star-parity.ts";
 import type { IdenticonInput } from "./types.ts";
 import {
@@ -39,6 +38,7 @@ export interface ScanResult extends IdenticonInput {
   orientation: number;
   uncertainStars: number;
   correctedBytes: number;
+  reconstructedStars: number;
   cumulativeFrames: number;
   captureMilliseconds: number;
 }
@@ -49,11 +49,9 @@ interface ScannerOptions {
 
 interface FrameEvidence {
   readonly canvas: HTMLCanvasElement;
-  readonly data: ImageData;
   readonly palette: ObservedPalette;
   readonly angle: number;
   readonly quality: FrameQuality;
-  readonly glyphs: readonly ByteObservation[];
   readonly stars: readonly ByteObservation[];
   readonly score: number;
 }
@@ -80,7 +78,7 @@ const roles: readonly Role[] = [
   "midheaven",
   "descendant",
   "imumCoeli"
-] as const;
+];
 const roleMap: Readonly<Record<string, Role>> = {
   Sun: "solar",
   Moon: "lunar",
@@ -126,7 +124,6 @@ function rotated(source: HTMLCanvasElement, angle: number): HTMLCanvasElement {
   targetContext.translate(target.width / 2, target.height / 2);
   targetContext.rotate(-angle * Math.PI / 180);
   targetContext.drawImage(source, -source.width / 2, -source.height / 2);
-
   return target;
 }
 
@@ -147,22 +144,23 @@ function guideCircle(canvas: HTMLCanvasElement): Circle {
   };
 }
 
+function pause(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+}
+
 function loadImage(file: File): Promise<HTMLImageElement> {
   const url = URL.createObjectURL(file);
 
   return new Promise((resolve, reject) => {
     const image = new Image();
-
     image.addEventListener("load", () => {
       URL.revokeObjectURL(url);
       resolve(image);
     }, { once: true });
-
     image.addEventListener("error", () => {
       URL.revokeObjectURL(url);
       reject(new Error("The selected photo could not be opened"));
     }, { once: true });
-
     image.src = url;
   });
 }
@@ -195,10 +193,6 @@ function captureImage(image: HTMLImageElement, canvas: HTMLCanvasElement): void 
   );
 }
 
-function pause(milliseconds: number): Promise<void> {
-  return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
-}
-
 function readable(values: readonly ByteObservation[]): number {
   return values.filter((value) => value.value !== null).length;
 }
@@ -209,18 +203,6 @@ function usable(quality: FrameQuality): boolean {
     quality.contrast >= minimumContrast &&
     quality.exposure >= minimumExposure &&
     quality.edgeDensity >= minimumEdgeDensity
-  );
-}
-
-function frameScore(
-  quality: FrameQuality,
-  glyphs: readonly ByteObservation[],
-  stars: readonly ByteObservation[]
-): number {
-  return (
-    quality.score * 100 +
-    readable(glyphs) * 4 +
-    readable(stars) * 0.7
   );
 }
 
@@ -246,18 +228,15 @@ function chooseAlignment(
   const canvas = rotated(source, selectedAngle);
   const data = imageData(canvas);
   const quality = inspectFrame(vision, data);
-  const glyphs = observeGlyphData(data, selected);
   const stars = observeStarParity(data, selected);
 
   return {
     canvas,
-    data,
     palette: selected,
     angle: selectedAngle,
     quality,
-    glyphs,
     stars,
-    score: frameScore(quality, glyphs, stars)
+    score: quality.score * 100 + readable(stars) * 1.5
   };
 }
 
@@ -265,8 +244,8 @@ function progressMessage(snapshot: VisualCaptureSnapshot): string {
   const useful = (snapshot.usefulMilliseconds / 1_000).toFixed(1);
   return [
     `${useful}s useful capture`,
-    `${snapshot.glyphBytes}/40 glyph bytes`,
-    `${snapshot.observedStars}/128 parity stars`,
+    `${snapshot.observedStars}/${seedSlotCount} recovery stars`,
+    `${snapshot.requiredStars} required`,
     `${snapshot.centreFound}/9 centre regions`,
     `${snapshot.ringFound}/12 ring regions`
   ].join(" · ");
@@ -367,7 +346,7 @@ export class Scanner {
     const copy = document.querySelector<HTMLElement>(".scan-copy p");
     if (copy) {
       copy.textContent =
-        "Move normally. Every clear glyph, colour and parity-star observation is saved. Once enough evidence exists, the camera stops and processing continues from the captured reconstruction.";
+        "Move normally. Every clear star, colour and approved glyph region is saved. Forty reliable stars can reconstruct the complete record. Once enough evidence exists, the camera stops and processing continues from the captured reconstruction.";
     }
 
     this.#close.addEventListener("click", () => this.close());
@@ -378,7 +357,6 @@ export class Scanner {
       if (!file) return;
       void this.readPhoto(file).catch((error) => this.processingError(error));
     });
-
     this.#dialog.addEventListener("cancel", (event) => {
       event.preventDefault();
       this.close();
@@ -405,7 +383,6 @@ export class Scanner {
 
   private async start(): Promise<void> {
     const session = ++this.#session;
-
     this.resetViewport();
     this.#dialog.showModal();
     this.#upload.disabled = false;
@@ -470,13 +447,12 @@ export class Scanner {
     if (capabilities.whiteBalanceMode?.includes("continuous")) {
       advanced.push({ whiteBalanceMode: "continuous" });
     }
-
     if (advanced.length === 0) return;
 
     try {
       await track.applyConstraints({ advanced } as MediaTrackConstraints);
     } catch {
-      // Camera hints are optional. Captured evidence remains cumulative.
+      // Optional camera hints. Evidence collection remains cumulative.
     }
   }
 
@@ -512,7 +488,6 @@ export class Scanner {
     this.#guide.style.display = "";
     this.#frozen.style.display = "none";
     this.hideProgress();
-
     context(this.#normalised).clearRect(
       0,
       0,
@@ -604,7 +579,6 @@ export class Scanner {
 
       const snapshot = this.#series.add({
         at: performance.now(),
-        glyphs: frame.glyphs,
         stars: frame.stars,
         quality: frame.quality.score,
         centre: frame.quality.centre,
@@ -627,7 +601,7 @@ export class Scanner {
     snapshot: VisualCaptureSnapshot
   ): string {
     const saved = snapshot.frames > 0
-      ? ` Progress saved: ${snapshot.glyphBytes}/40 glyph bytes and ${snapshot.observedStars}/128 parity stars.`
+      ? ` Progress saved: ${snapshot.observedStars}/${seedSlotCount} recovery stars.`
       : "";
 
     if (quality.sharpness < minimumSharpness) {
@@ -639,7 +613,7 @@ export class Scanner {
     if (quality.contrast < minimumContrast) {
       return `Reduce glare or move slightly closer.${saved}`;
     }
-    return `Collecting whichever details are clear in each moment.${saved}`;
+    return `Collecting whichever approved elements are clear in each moment.${saved}`;
   }
 
   private capturedRoles(): ReadonlySet<Role> {
@@ -649,12 +623,10 @@ export class Scanner {
       if (!Number.isFinite(this.#centreMosaicScores[index]!)) continue;
       found.add(roleMap[centreRegions[index]!.role]!);
     }
-
     for (let index = 0; index < ringRegions.length; index += 1) {
       if (!Number.isFinite(this.#ringMosaicScores[index]!)) continue;
       found.add(roleMap[ringRegions[index]!.role]!);
     }
-
     return found;
   }
 
@@ -664,9 +636,10 @@ export class Scanner {
   ): boolean {
     const reading = snapshot.reading;
     if (!snapshot.ready || !reading) return false;
-    if (this.capturedRoles().size !== roles.length) return false;
+    if (this.capturedRoles().size < 4) return false;
+    if (snapshot.centreFound < 4 || snapshot.ringFound < 4) return false;
 
-    const expectedPalette = seedPaletteIndex(reading.value.seed);
+    const expectedPalette = seedPaletteIndex(reading.value);
     return (
       frame.palette.index === expectedPalette ||
       frame.palette.confidence < 0.4
@@ -705,27 +678,9 @@ export class Scanner {
       );
     };
 
-    if (frame.quality.score > this.#baseMosaicScore) {
-      const previous = Number.isFinite(this.#baseMosaicScore)
-        ? copyCanvas(this.#mosaic)
-        : undefined;
-
+    if (!Number.isFinite(this.#baseMosaicScore)) {
       this.#baseMosaicScore = frame.quality.score;
       target.drawImage(frame.canvas, 0, 0);
-
-      if (previous) {
-        for (let index = 0; index < centreRegions.length; index += 1) {
-          if (!Number.isFinite(this.#centreMosaicScores[index]!)) continue;
-          const region = centreRegions[index]!;
-          copyRegion(previous, region.x, region.y, region.size);
-        }
-
-        for (let index = 0; index < ringRegions.length; index += 1) {
-          if (!Number.isFinite(this.#ringMosaicScores[index]!)) continue;
-          const region = ringRegions[index]!;
-          copyRegion(previous, region.x, region.y, region.size * 1.35);
-        }
-      }
     }
 
     for (let index = 0; index < centreRegions.length; index += 1) {
@@ -757,7 +712,7 @@ export class Scanner {
     const session = this.#session;
     const reading = snapshot.reading;
     const value = reading.value;
-    const paletteIndex = seedPaletteIndex(value.seed);
+    const paletteIndex = seedPaletteIndex(value);
 
     this.freeze(this.#mosaic);
     this.showProgress(8, "Capture complete. Camera stopped. You no longer need to hold it up.");
@@ -765,15 +720,15 @@ export class Scanner {
     await pause(70);
     if (session !== this.#session) return;
 
-    this.showProgress(24, "Reconstructing the glyph-carried payload…");
+    this.showProgress(28, `Reconstructing the complete record from ${reading.observedStars} reliable stars…`);
     await nextPaint();
-    await pause(35);
+    await pause(40);
 
-    this.showProgress(40, "Applying parity-star repair to missing or ambiguous glyph bytes…");
+    this.showProgress(48, `Reed–Solomon restored ${reading.reconstructedStars} missing or discarded star symbols…`);
     await nextPaint();
-    await pause(35);
+    await pause(40);
 
-    this.showProgress(54, "Checking the recovered seed against the captured colour palette…");
+    this.showProgress(58, "Checking the recovered identity against the captured colour palette…");
     await nextPaint();
     const aligned = alignPaletteToIndex(current.palette, paletteIndex);
 
@@ -794,7 +749,6 @@ export class Scanner {
         label: "clearest captured moment"
       });
     }
-
     sources.push({
       canvas: current.canvas,
       palette: aligned,
@@ -808,10 +762,10 @@ export class Scanner {
 
     for (let index = 0; index < sources.length; index += 1) {
       const source = sources[index]!;
-      const progress = 62 + (index / Math.max(1, sources.length)) * 25;
+      const progress = 64 + (index / Math.max(1, sources.length)) * 24;
       this.showProgress(
         progress,
-        `Verifying signs and constellation from the ${source.label}…`
+        `Verifying the approved glyphs and constellation from the ${source.label}…`
       );
       await nextPaint();
 
@@ -832,34 +786,33 @@ export class Scanner {
 
     const rolesFound = roles.filter((role) => roleFound[role]).length;
     const verified = (
-      rolesFound === roles.length &&
-      constellationFound
-    ) || (
-      rolesFound >= 5 &&
       constellationFound &&
-      this.capturedRoles().size === roles.length
+      rolesFound >= 4 &&
+      centreFound >= 4 &&
+      ringFound >= 4
     );
 
     if (!verified) {
       throw new Error(
-        `The captured data reconstructed correctly, but visual verification only confirmed ${rolesFound}/6 sign roles, ${centreFound}/9 centre regions and ${ringFound}/12 ring regions`
+        `The star record reconstructed correctly, but visual verification only confirmed ${rolesFound}/6 sign roles, ${centreFound}/9 centre regions and ${ringFound}/12 ring regions`
       );
     }
 
-    this.showProgress(94, "Final consistency check across payload, palette, glyphs and parity stars…");
+    this.showProgress(94, "Final consistency check across stars, palette, constellation, grid and ring…");
     await nextPaint();
     await pause(60);
     if (session !== this.#session) return;
 
-    this.showProgress(100, "Processing complete. Applying the exact seed and signs…");
+    this.showProgress(100, "Processing complete. Applying the exact identity and signs…");
     await nextPaint();
 
     this.#options.apply({
       ...value,
       paletteIndex,
       orientation: current.angle,
-      uncertainStars: 128 - reading.observedStars,
-      correctedBytes: reading.recoveredGlyphBytes,
+      uncertainStars: seedSlotCount - reading.observedStars,
+      correctedBytes: reading.reconstructedStars,
+      reconstructedStars: reading.reconstructedStars,
       cumulativeFrames: snapshot.frames,
       captureMilliseconds: Math.round(snapshot.usefulMilliseconds)
     });
@@ -905,7 +858,6 @@ export class Scanner {
       this.#bestFrame = frame;
       const snapshot = this.#series.add({
         at: performance.now(),
-        glyphs: frame.glyphs,
         stars: frame.stars,
         quality: frame.quality.score,
         centre: frame.quality.centre,
@@ -914,7 +866,7 @@ export class Scanner {
 
       if (!snapshot.reading) {
         throw new Error(
-          `The photo yielded ${snapshot.glyphBytes}/40 glyph bytes and ${snapshot.observedStars}/128 parity stars; more visual evidence is required`
+          `The photo yielded ${snapshot.observedStars}/${seedSlotCount} readable recovery stars; at least ${seedDataByteCount} consistent stars are required`
         );
       }
 
