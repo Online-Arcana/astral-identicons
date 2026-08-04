@@ -51,14 +51,14 @@ describe("cumulative scanner capture", () => {
       {
         at: 2_200,
         observations: observations(96, 128),
-        centre: mask(9, 0, 9),
+        centre: mask(9, 0, 3),
         ring: mask(12, 9, 12)
       },
       {
         at: 2_400,
-        observations: observations(0, 128),
-        centre: mask(9, 0, 9),
-        ring: mask(12, 0, 12)
+        observations: observations(0, 32),
+        centre: mask(9, 3, 6),
+        ring: mask(12, 3, 6)
       }
     ] as const;
 
