@@ -91,7 +91,6 @@ export function astralInput(data: Uint8Array): IdenticonInput {
   const values = publicSigns(data.slice(signOffset, headSize));
   return input({
     seed: base64Url(rawKey),
-    seedKind: "ed25519",
     solar: values.solar,
     lunar: values.lunar,
     ascendant: values.ascendant,
