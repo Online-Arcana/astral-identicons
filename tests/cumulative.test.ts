@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { input } from "../src/input.ts";
-import { seedPayload } from "../src/seed.ts";
+import { seedDataByteCount, seedSlotCount } from "../src/seed.ts";
 import { starParityCodeword, type ByteObservation } from "../src/star-parity.ts";
 import {
   VisualCaptureSeries,
@@ -27,41 +27,44 @@ function observations(
   }));
 }
 
-function range(start: number, end: number): Set<number> {
-  return new Set(Array.from({ length: end - start }, (_unused, index) => {
-    return start + index;
-  }));
-}
-
 function mask(length: number, indexes: readonly number[]): readonly boolean[] {
   const included = new Set(indexes);
   return Array.from({ length }, (_unused, index) => included.has(index));
 }
 
+function spread(count: number): number[] {
+  const indexes = new Set<number>();
+  let value = 7;
+
+  while (indexes.size < count) {
+    indexes.add(value % seedSlotCount);
+    value += 29;
+  }
+
+  return [...indexes];
+}
+
 describe("human cumulative scanner capture", () => {
-  test("keeps useful evidence across shake and long out-of-frame gaps", () => {
+  test("combines two brief moments separated by a long gap", () => {
     const series = new VisualCaptureSeries();
-    const payload = seedPayload(sample);
-    const stars = starParityCodeword(sample);
-    let snapshot: VisualCaptureSnapshot | undefined;
+    const codeword = starParityCodeword(sample);
+    const selected = spread(seedDataByteCount);
+    let snapshot: VisualCaptureSnapshot;
 
     snapshot = series.add({
       at: 0,
-      glyphs: observations(payload, range(0, 8)),
-      stars: observations(stars, range(0, 32)),
+      stars: observations(codeword, new Set(selected.slice(0, 20))),
       quality: 0.88,
       centre: mask(9, [0, 1, 2, 3]),
       ring: mask(12, [0, 1, 2, 3, 4])
     });
 
     expect(snapshot.ready).toBe(false);
-    expect(snapshot.glyphBytes).toBe(8);
-    expect(snapshot.observedStars).toBe(32);
+    expect(snapshot.observedStars).toBe(20);
 
     snapshot = series.add({
       at: 12_000,
-      glyphs: observations(payload, range(8, 16)),
-      stars: observations(stars, range(32, 65)),
+      stars: observations(codeword, new Set(selected.slice(20))),
       quality: 0.91,
       centre: mask(9, [4, 5, 6, 7, 8]),
       ring: mask(12, [5, 6, 7, 8, 9, 10, 11])
@@ -70,32 +73,29 @@ describe("human cumulative scanner capture", () => {
     expect(snapshot.ready).toBe(true);
     expect(snapshot.frames).toBe(2);
     expect(snapshot.usefulMilliseconds).toBe(350);
-    expect(snapshot.glyphBytes).toBe(16);
-    expect(snapshot.observedStars).toBe(65);
+    expect(snapshot.observedStars).toBe(seedDataByteCount);
+    expect(snapshot.requiredStars).toBe(seedDataByteCount);
     expect(snapshot.centreFound).toBe(9);
     expect(snapshot.ringFound).toBe(12);
     expect(snapshot.reading?.value).toEqual(sample);
-    expect(snapshot.reading?.recoveredGlyphBytes).toBe(24);
+    expect(snapshot.reading?.reconstructedStars).toBe(88);
   });
 
-  test("does not lose saved progress when time passes without a useful frame", () => {
+  test("does not lose saved stars when time passes", () => {
     const series = new VisualCaptureSeries();
-    const payload = seedPayload(sample);
-    const stars = starParityCodeword(sample);
+    const codeword = starParityCodeword(sample);
+    const selected = new Set(spread(25));
 
     series.add({
       at: 0,
-      glyphs: observations(payload, range(0, 10)),
-      stars: observations(stars, range(0, 40)),
+      stars: observations(codeword, selected),
       quality: 0.8,
       centre: mask(9, [0, 1]),
       ring: mask(12, [0, 1])
     });
 
     const muchLater = series.snapshot();
-
-    expect(muchLater.glyphBytes).toBe(10);
-    expect(muchLater.observedStars).toBe(40);
+    expect(muchLater.observedStars).toBe(25);
     expect(muchLater.centreFound).toBe(2);
     expect(muchLater.ringFound).toBe(2);
   });
