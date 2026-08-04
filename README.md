@@ -12,7 +12,7 @@ Each identicon is both a repeatable visual mark and a structured visual record. 
 
 - **Inner interpretation:** the Solar sign selects the large upright constellation and artistic sign illustration. A fixed 3 × 3 grid places upright references for the Sun, Moon, Ascendant, Midheaven, Descendant and Imum Coeli.
 - **Astrological ring:** twelve equally spaced glyphs sit between two concentric circles. Solar glyphs occupy the cardinal points, Lunar glyphs occupy the alternating points, and the four chart angles fill the remaining positions. Imum Coeli is on the left and Descendant is on the right, matching the inner grid.
-- **Palette:** one of 64 reduced three-colour palettes is derived from the exact seed and acts as an additional camera check rather than replacing the seed.
+- **Palette:** one of 64 reduced three-colour palettes is drawn by a deterministic SHA-256 counter-mode PRNG from the exact seed and its nonce. It acts as an additional camera check rather than replacing the seed.
 - **Protected star payload:** 128 stars encode the exact seed and all six signs in a Reed-Solomon-protected visual codeword.
 
 The upright constellation and asymmetric registration stars establish orientation. The inner grid and ring independently identify the signs. The coded stars carry the authoritative recoverable payload and resolve fields whose visual glyph readings are uncertain.
@@ -47,34 +47,66 @@ is scanned back as exactly:
 
 Seeds longer than 32 UTF-8 bytes are rejected because they cannot be represented exactly within this visual code version.
 
+## Palette nonces and target colours
+
+Every seed has a deterministic 256-bit nonce. Palette selection always follows the same rule:
+
+```text
+palette index = SHA-256 counter-mode PRNG(seed, nonce)
+```
+
+Ordinary seeds receive a nonce derived cryptographically from the seed. Selected seeds may instead use a tuned nonce from `config/palette-targets.json`. This is not a seed-to-colour exception and it does not bypass the PRNG. The tuner searches the normal nonce space until the PRNG reaches the exact requested palette, or the closest palette available in the 64-entry codebook under a CIE Lab colour-distance calculation.
+
+The configured example makes `6270f2-example` resolve through the normal PRNG path to:
+
+```text
+background  #525
+layer 0     #6EB
+layer 1     #69E
+```
+
+After adding or changing a target in the JSON file, calculate its nonce with:
+
+```sh
+bun run palette:tune
+```
+
 ## Camera scanner
 
-The public frontend includes an in-page camera scanner. It runs locally and does not upload the image or download an external image-processing runtime.
+The public frontend includes an in-page camera scanner. Camera frames and reconstructed image data stay in the browser and are not uploaded. The browser fetches OpenCV.js to perform the local quality and edge analysis.
 
 1. Select **Scan identicon**.
 2. Keep the complete outer circle inside the guide.
-3. The scanner reads automatically once the circle and protected payload are stable.
-4. **Use photo** remains available for a saved image.
+3. Allow the camera briefly to settle focus, exposure and white balance.
+4. The scanner collects useful evidence from a rolling 2–5 second series of frames.
+5. It freezes only after the protected payload and every expected visual region are recoverable.
+6. **Use photo** remains available for a saved image.
 
-There is no manual **Read frame** step. After a successful read, the scanner closes automatically and applies the exact recovered seed and six signs to the builder. It can be opened again for another scan.
+The user does not need to hold one perfect frame continuously. Clear stars, centre glyphs and ring glyphs observed at different moments are accumulated into one reconstruction. After a successful read, the scanner closes automatically and applies the exact recovered seed and six signs to the builder. It can be opened again for another scan.
 
 The recognition pipeline uses all visual evidence together:
 
 ```text
+camera autofocus, exposure and white-balance settling
+    → short initial delay before evidence collection
+
 paired outer-circle detection
     → scale and centre normalisation
+
+OpenCV Canny edges + Laplacian sharpness
+    → blur, contrast, exposure and regional-presence gates
 
 observed palette + asymmetric anchors
     → layer order and candidate orientation
 
-upright constellation
-    → Solar sign and orientation evidence
+rolling 2–5 second evidence window
+    → cumulative protected-star votes and best-region mosaic
 
 128 coded stars + Reed-Solomon recovery
     → exact seed and authoritative six-sign payload
 
-inner grid + rotated ring glyphs
-    → independent sign confirmation
+expected constellation + 9 centre glyphs + 12 ring glyphs
+    → independent final reconstruction verification
 ```
 
 A shifted camera palette or a low-confidence glyph does not become the final field value. The protected payload resolves it, while the palette and duplicated glyphs help reject incorrect orientation and layer interpretations.
@@ -156,29 +188,38 @@ Every generated identicon is:
 ## Project structure
 
 ```text
-.github/workflows/  GitHub Pages deployment
-assets/              constellation, star and zodiac SVG assets
-examples/            generated example output
-public/              responsive web interface
-scripts/             static-site build tools
+.github/workflows/       GitHub Pages deployment
+assets/                  constellation, star and zodiac SVG assets
+config/                  palette target and tuned nonce configuration
+examples/                generated example output
+public/                  responsive web interface
+scripts/
+  build-pages.ts         static-site build
+  tune-palette.ts        exact or nearest palette nonce search
 src/
-  build.ts           shared SVG renderer
-  camera.ts          bounded high-resolution camera startup
-  code-layout.ts     coded-star and registration geometry
-  layout.ts          ring and inner-grid geometry
-  palette.ts         64-entry visual palette codebook
-  rs.ts              Reed-Solomon encoding and erasure recovery
-  scan.ts            automatic camera and photo scanner orchestration
-  scan-colour.ts     colour clustering and orientation recovery
-  scan-cv.ts         local paired-ring detection and normalisation
-  scan-seed.ts       complete protected-payload decoding
-  scan-sign.ts       constellation and glyph classification
-  seed.ts            exact seed, sign payload and star-symbol mapping
-  cli.ts             command-line interface
-  server.ts          Bun web server
-  web.ts             browser controls and preview
-  xml.ts             SVG parsing and rewriting
-tests/                deterministic and recovery tests
+  build.ts               shared SVG renderer
+  camera.ts              bounded high-resolution camera startup
+  code-layout.ts         coded-star and registration geometry
+  layout.ts              ring and inner-grid geometry
+  opencv.ts              local Canny, blur, exposure and region analysis
+  palette.ts             64-entry visual palette codebook
+  palette-nonce.ts       nonce selection for every seed
+  prng.ts                SHA-256 counter-mode deterministic PRNG
+  rs.ts                  Reed-Solomon encoding and erasure recovery
+  scan.ts                cumulative camera and photo scanner orchestration
+  scan-colour.ts         colour clustering and orientation recovery
+  scan-cv.ts             local paired-ring detection and normalisation
+  scan-seed.ts           complete protected-payload decoding
+  scan-series.ts         rolling multi-frame evidence fusion
+  scan-sign.ts           general constellation and glyph classification
+  scan-verify.ts         fast expected-element verification
+  seed.ts                exact seed, sign payload and star-symbol mapping
+  sha256.ts              synchronous SHA-256 implementation
+  cli.ts                 command-line interface
+  server.ts              Bun web server
+  web.ts                 browser controls and preview
+  xml.ts                 SVG parsing and rewriting
+tests/                   deterministic and recovery tests
 ```
 
 ## Checks
@@ -186,4 +227,5 @@ tests/                deterministic and recovery tests
 ```sh
 bun run check
 bun test
+bun run build:pages
 ```

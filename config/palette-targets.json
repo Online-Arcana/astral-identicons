@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "algorithm": "sha256-counter-v1",
+  "targets": {
+    "6270f2-example": {
+      "target": {
+        "background": "#525",
+        "layer0": "#6EB",
+        "layer1": "#69E"
+      },
+      "nonce": "b469817f9522ea7443a965d5fbfa763f54c08938a35f7a80fcc13b347afe6e1a",
+      "paletteIndex": 40,
+      "distance": 0
+    }
+  }
+}

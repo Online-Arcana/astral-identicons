@@ -18,10 +18,16 @@ import {
   swapPalette,
   type ObservedPalette
 } from "./scan-colour.ts";
+import { inspectFrame, loadOpenCv, type FrameQuality } from "./opencv.ts";
+import { canvas as layoutCanvas, placements, ringPlacements } from "./layout.ts";
+import { CaptureSeries, type CaptureSnapshot } from "./scan-series.ts";
 import {
-  readSeed,
+  observeSeed,
+  recoverSeedObservations,
+  type NibbleObservation,
   type SeedReading
 } from "./scan-seed.ts";
+import { verifyExpectedSigns } from "./scan-verify.ts";
 import { seedPaletteIndex } from "./seed.ts";
 import type { IdenticonInput } from "./types.ts";
 
@@ -30,25 +36,53 @@ export interface ScanResult extends IdenticonInput {
   orientation: number;
   uncertainStars: number;
   correctedBytes: number;
+  cumulativeFrames: number;
+  captureMilliseconds: number;
 }
 
 interface ScannerOptions {
   apply(result: ScanResult): void;
 }
 
-interface PayloadCandidate {
+interface Calibration {
+  offset: number;
+  swapped: boolean;
+}
+
+interface FrameEvidence {
   canvas: HTMLCanvasElement;
   data: ImageData;
-  angle: number;
   palette: ObservedPalette;
-  reading: SeedReading;
+  angle: number;
+  observations: readonly NibbleObservation[];
+  reading: SeedReading | undefined;
+  quality: FrameQuality;
   score: number;
 }
 
-const automaticInterval = 120;
-const coarseOffsets = [0, 90, 180, 270] as const;
-const fallbackOffsets = [-3, -1.5, 1.5, 3] as const;
-const refineOffsets = [-2, -1, -0.5, 0.5, 1, 2] as const;
+interface CameraCapabilities extends MediaTrackCapabilities {
+  focusMode?: readonly string[];
+  exposureMode?: readonly string[];
+  whiteBalanceMode?: readonly string[];
+}
+
+const automaticInterval = 180;
+const focusSettleMilliseconds = 750;
+const evidenceResetMilliseconds = 1_500;
+const analysisSize = 512;
+const orientationOffsets = [0, 90, 180, 270] as const;
+const fineOffsets = [0, -1.5, 1.5] as const;
+const layoutPlaceholder: IdenticonInput = {
+  seed: "capture-layout",
+  solar: "aries",
+  lunar: "aries",
+  ascendant: "aries",
+  midheaven: "aries",
+  descendant: "cancer",
+  imumCoeli: "aries"
+};
+const centreRegions = placements(layoutPlaceholder);
+const ringRegions = ringPlacements(layoutPlaceholder);
 
 function required<T extends Element>(selector: string): T {
   const value = document.querySelector<T>(selector);
@@ -60,6 +94,14 @@ function context(canvas: HTMLCanvasElement): CanvasRenderingContext2D {
   const value = canvas.getContext("2d", { willReadFrequently: true });
   if (!value) throw new Error("Could not access the scanner canvas");
   return value;
+}
+
+function imageData(canvas: HTMLCanvasElement): ImageData {
+  return context(canvas).getImageData(0, 0, canvas.width, canvas.height);
+}
+
+function normalisedAngle(value: number): number {
+  return ((value % 360) + 360) % 360;
 }
 
 function rotated(source: HTMLCanvasElement, angle: number): HTMLCanvasElement {
@@ -75,12 +117,12 @@ function rotated(source: HTMLCanvasElement, angle: number): HTMLCanvasElement {
   return target;
 }
 
-function imageData(canvas: HTMLCanvasElement): ImageData {
-  return context(canvas).getImageData(0, 0, canvas.width, canvas.height);
-}
-
-function normalisedAngle(value: number): number {
-  return ((value % 360) + 360) % 360;
+function copyCanvas(source: HTMLCanvasElement, size = source.width): HTMLCanvasElement {
+  const target = document.createElement("canvas");
+  target.width = size;
+  target.height = size;
+  context(target).drawImage(source, 0, 0, size, size);
+  return target;
 }
 
 function guideCircle(canvas: HTMLCanvasElement): Circle {
@@ -98,32 +140,21 @@ function loadImage(file: File): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const image = new Image();
 
-    image.addEventListener(
-      "load",
-      () => {
-        URL.revokeObjectURL(url);
-        resolve(image);
-      },
-      { once: true }
-    );
+    image.addEventListener("load", () => {
+      URL.revokeObjectURL(url);
+      resolve(image);
+    }, { once: true });
 
-    image.addEventListener(
-      "error",
-      () => {
-        URL.revokeObjectURL(url);
-        reject(new Error("The selected photo could not be opened"));
-      },
-      { once: true }
-    );
+    image.addEventListener("error", () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("The selected photo could not be opened"));
+    }, { once: true });
 
     image.src = url;
   });
 }
 
-function captureImage(
-  image: HTMLImageElement,
-  canvas: HTMLCanvasElement
-): void {
+function captureImage(image: HTMLImageElement, canvas: HTMLCanvasElement): void {
   const width = image.naturalWidth;
   const height = image.naturalHeight;
 
@@ -151,143 +182,158 @@ function captureImage(
   );
 }
 
-function payloadScore(
-  reading: SeedReading,
-  palette: ObservedPalette,
-  anchorConfidence: number
+function pause(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+}
+
+function observationScore(
+  observations: readonly NibbleObservation[],
+  reading: SeedReading | undefined,
+  anchorConfidence: number,
+  quality: FrameQuality
 ): number {
-  const expectedPalette = seedPaletteIndex(reading.value.seed);
-  const paletteAgreement = expectedPalette === palette.index
-    ? 5 + palette.confidence * 3
+  const visible = observations.filter((value) => value.value !== null);
+  const confidence = visible.reduce((sum, value) => sum + value.confidence, 0);
+  const payload = reading
+    ? 2_000 - reading.erasures * 20 - reading.uncertainStars * 2
     : 0;
 
   return (
-    20 +
-    reading.confidence * 8 +
-    anchorConfidence * 2 +
-    paletteAgreement -
-    reading.erasures * 0.8 -
-    reading.uncertainStars * 0.06
+    payload +
+    visible.length * 4 +
+    confidence +
+    anchorConfidence * 20 +
+    quality.score * 100
   );
 }
 
-function readCandidate(
-  source: HTMLCanvasElement,
-  palette: ObservedPalette,
-  angle: number,
-  anchorConfidence: number
-): PayloadCandidate | undefined {
-  const canvas = rotated(source, angle);
-  const data = imageData(canvas);
-
+function tryReading(
+  observations: readonly NibbleObservation[]
+): SeedReading | undefined {
   try {
-    const reading = readSeed(data, palette);
-
-    return {
-      canvas,
-      data,
-      angle,
-      palette,
-      reading,
-      score: payloadScore(reading, palette, anchorConfidence)
-    };
+    return recoverSeedObservations(observations);
   } catch {
     return undefined;
   }
 }
 
-function better(
-  current: PayloadCandidate | undefined,
-  candidate: PayloadCandidate
-): PayloadCandidate {
-  if (!current) return candidate;
-  if (candidate.reading.erasures !== current.reading.erasures) {
-    return candidate.reading.erasures < current.reading.erasures
-      ? candidate
-      : current;
+function candidate(
+  source: HTMLCanvasElement,
+  palette: ObservedPalette,
+  angle: number,
+  anchorConfidence: number,
+  cv: Awaited<ReturnType<typeof loadOpenCv>>
+): FrameEvidence {
+  const canvas = rotated(source, angle);
+  const data = imageData(canvas);
+  const quality = inspectFrame(cv, data);
+  const observations = observeSeed(data, palette);
+  const reading = tryReading(observations);
+
+  return {
+    canvas,
+    data,
+    palette,
+    angle,
+    observations,
+    reading,
+    quality,
+    score: observationScore(
+      observations,
+      reading,
+      anchorConfidence,
+      quality
+    )
+  };
+}
+
+function better(left: FrameEvidence | undefined, right: FrameEvidence): FrameEvidence {
+  if (!left) return right;
+
+  if (Boolean(left.reading) !== Boolean(right.reading)) {
+    return right.reading ? right : left;
   }
 
-  return candidate.score > current.score ? candidate : current;
-}
-
-function isStrong(candidate: PayloadCandidate): boolean {
-  return (
-    candidate.reading.erasures <= 4 &&
-    candidate.reading.uncertainStars <= 12
-  );
-}
-
-function refinePayload(
-  source: HTMLCanvasElement,
-  candidate: PayloadCandidate
-): PayloadCandidate {
-  if (isStrong(candidate)) return candidate;
-
-  const paletteIndex = seedPaletteIndex(candidate.reading.value.seed);
-  const palette = alignPaletteToIndex(candidate.palette, paletteIndex);
-  let best = candidate;
-
-  for (const offset of refineOffsets) {
-    const angle = normalisedAngle(candidate.angle + offset);
-    const refined = readCandidate(source, palette, angle, 1);
-    if (!refined) continue;
-    best = better(best, refined);
-    if (isStrong(best)) break;
+  if (left.reading && right.reading && left.reading.erasures !== right.reading.erasures) {
+    return right.reading.erasures < left.reading.erasures ? right : left;
   }
 
-  return best;
+  return right.score > left.score ? right : left;
 }
 
-function bestPayload(
+function calibrate(
   source: HTMLCanvasElement,
-  rawData: ImageData,
-  observed: ObservedPalette
-): PayloadCandidate {
-  const palettes = [observed, swapPalette(observed)];
-  let best: PayloadCandidate | undefined;
+  raw: ImageData,
+  observed: ObservedPalette,
+  cv: Awaited<ReturnType<typeof loadOpenCv>>
+): { calibration: Calibration; frame: FrameEvidence } {
+  let best: FrameEvidence | undefined;
+  let bestCalibration: Calibration | undefined;
 
-  for (const palette of palettes) {
-    const anchor = findOrientation(rawData, palette);
-    const bases = coarseOffsets.map((offset) => {
-      return normalisedAngle(anchor.angle + offset);
-    });
+  for (const swapped of [false, true]) {
+    const palette = swapped ? swapPalette(observed) : observed;
+    const anchor = findOrientation(raw, palette);
 
-    for (const angle of bases) {
-      const candidate = readCandidate(
+    for (const offset of orientationOffsets) {
+      const angle = normalisedAngle(anchor.angle + offset);
+      const value = candidate(source, palette, angle, anchor.confidence, cv);
+      const selected = better(best, value);
+
+      if (selected !== value) continue;
+      best = value;
+      bestCalibration = { offset, swapped };
+    }
+  }
+
+  if (!best || !bestCalibration) {
+    throw new Error("Could not calibrate the identicon orientation");
+  }
+
+  return { calibration: bestCalibration, frame: best };
+}
+
+function calibratedFrame(
+  source: HTMLCanvasElement,
+  raw: ImageData,
+  observed: ObservedPalette,
+  calibration: Calibration,
+  cv: Awaited<ReturnType<typeof loadOpenCv>>
+): FrameEvidence {
+  const palette = calibration.swapped ? swapPalette(observed) : observed;
+  const anchor = findOrientation(raw, palette);
+  const base = normalisedAngle(anchor.angle + calibration.offset);
+  let best: FrameEvidence | undefined;
+
+  for (const offset of fineOffsets) {
+    best = better(
+      best,
+      candidate(
         source,
         palette,
-        angle,
-        anchor.confidence
-      );
-
-      if (!candidate) continue;
-      best = better(best, candidate);
-      if (isStrong(candidate)) return candidate;
-    }
-
-    if (best) continue;
-
-    for (const base of bases) {
-      for (const offset of fallbackOffsets) {
-        const candidate = readCandidate(
-          source,
-          palette,
-          normalisedAngle(base + offset),
-          anchor.confidence
-        );
-
-        if (!candidate) continue;
-        best = better(best, candidate);
-        if (isStrong(candidate)) return candidate;
-      }
-    }
+        normalisedAngle(base + offset),
+        anchor.confidence,
+        cv
+      )
+    );
   }
 
-  if (!best) {
-    throw new Error("The captured star payload could not be reconstructed");
-  }
+  return best!;
+}
 
-  return refinePayload(source, best);
+function qualityMessage(quality: FrameQuality): string {
+  if (quality.sharpness < 36) return "Identicon found. Let the camera finish focusing…";
+  if (quality.exposure < 0.42) return "Identicon found. Waiting for exposure to settle…";
+  if (quality.contrast < 14) return "Identicon found. Increase contrast or reduce glare…";
+  if (quality.edgeDensity < 0.006) return "Identicon found. Move slightly closer so its details are readable…";
+  return "Identicon found. Collecting clear details across several frames…";
+}
+
+function progressMessage(snapshot: CaptureSnapshot): string {
+  const seconds = Math.min(5, snapshot.elapsed / 1_000).toFixed(1);
+  const stars = `${snapshot.observedStars}/128 stars`;
+  const centre = `${snapshot.centreFound}/9 centre signs`;
+  const ring = `${snapshot.ringFound}/12 ring signs`;
+  return `Reading ${seconds}s · ${stars} · ${centre} · ${ring}`;
 }
 
 export class Scanner {
@@ -302,19 +348,36 @@ export class Scanner {
   readonly #file = required<HTMLInputElement>("#scan-file");
   readonly #close = required<HTMLButtonElement>("#scan-close");
   readonly #frozen: HTMLCanvasElement;
+  readonly #mosaic: HTMLCanvasElement;
+  readonly #series = new CaptureSeries();
   readonly #options: ScannerOptions;
+  readonly #centreMosaicScores = Array<number>(centreRegions.length)
+    .fill(Number.NEGATIVE_INFINITY);
+  readonly #ringMosaicScores = Array<number>(ringRegions.length)
+    .fill(Number.NEGATIVE_INFINITY);
 
   #stream: MediaStream | undefined;
   #openRequest: Promise<void> | undefined;
   #timer: number | undefined;
-  #decoding = false;
+  #busy = false;
   #session = 0;
+  #lastCircleAt = 0;
+  #calibration: Calibration | undefined;
+  #bestFrame: FrameEvidence | undefined;
+  #lastVerificationKey = "";
+  #baseMosaicScore = Number.NEGATIVE_INFINITY;
+  #lastVerificationAt = 0;
 
   constructor(options: ScannerOptions) {
     this.#options = options;
     this.#frozen = document.createElement("canvas");
-    this.#frozen.width = 1024;
-    this.#frozen.height = 1024;
+    this.#mosaic = document.createElement("canvas");
+
+    for (const canvas of [this.#frozen, this.#mosaic]) {
+      canvas.width = analysisSize;
+      canvas.height = analysisSize;
+    }
+
     this.#frozen.setAttribute("aria-label", "Captured identicon frame");
     Object.assign(this.#frozen.style, {
       position: "absolute",
@@ -330,7 +393,7 @@ export class Scanner {
     const copy = document.querySelector<HTMLElement>(".scan-copy p");
     if (copy) {
       copy.textContent =
-        "The scanner captures as soon as the complete identicon is framed, then reconstructs from the frozen image. You do not need to keep holding it still.";
+        "The scanner waits briefly for focus and exposure, then combines clear details from a rolling 2–5 second series. It freezes only after the complete protected payload and expected signs are readable.";
     }
 
     this.#close.addEventListener("click", () => this.close());
@@ -375,9 +438,7 @@ export class Scanner {
     this.resetViewport();
     this.#dialog.showModal();
     this.#upload.disabled = false;
-    this.message(
-      "Scanner ready. Requesting camera access… You can use a saved photo immediately."
-    );
+    this.message("Preparing local computer vision and requesting camera access…");
 
     await nextPaint();
 
@@ -390,6 +451,7 @@ export class Scanner {
     }
 
     try {
+      const cvRequest = loadOpenCv();
       const stream = await requestCamera(devices);
 
       if (session !== this.#session || !this.#dialog.open) {
@@ -400,19 +462,53 @@ export class Scanner {
       this.#stream = stream;
       this.#video.srcObject = stream;
       await startVideo(this.#video);
+      await this.configureCamera(stream);
+      await cvRequest;
 
       if (session !== this.#session || !this.#dialog.open) {
         this.stop();
         return;
       }
 
+      this.message("Camera ready. Letting autofocus and exposure settle…");
+      await pause(focusSettleMilliseconds);
+
+      if (session !== this.#session || !this.#dialog.open) return;
+
       this.message(
-        "Camera ready. Put the complete outer circle inside the guide; it will capture immediately."
+        "Place the complete identicon inside the guide. Clear details will accumulate across several frames."
       );
       this.scheduleAutomatic(0);
     } catch (error) {
       if (session !== this.#session) return;
       this.cameraError(error);
+    }
+  }
+
+  private async configureCamera(stream: MediaStream): Promise<void> {
+    const track = stream.getVideoTracks()[0];
+    if (!track?.getCapabilities) return;
+
+    const capabilities = track.getCapabilities() as CameraCapabilities;
+    const advanced: Record<string, string>[] = [];
+
+    if (capabilities.focusMode?.includes("continuous")) {
+      advanced.push({ focusMode: "continuous" });
+    }
+    if (capabilities.exposureMode?.includes("continuous")) {
+      advanced.push({ exposureMode: "continuous" });
+    }
+    if (capabilities.whiteBalanceMode?.includes("continuous")) {
+      advanced.push({ whiteBalanceMode: "continuous" });
+    }
+
+    if (advanced.length === 0) return;
+
+    try {
+      await track.applyConstraints({ advanced } as MediaTrackConstraints);
+    } catch {
+      // Browsers expose these capabilities inconsistently. Automatic capture
+      // still works when the track rejects an otherwise supported hint.
     }
   }
 
@@ -427,19 +523,32 @@ export class Scanner {
 
   private stop(): void {
     this.stopCamera();
-    this.#decoding = false;
+    this.#busy = false;
     this.resetViewport();
     this.#upload.disabled = false;
   }
 
+  private resetEvidence(): void {
+    this.#series.clear();
+    this.#lastCircleAt = 0;
+    this.#calibration = undefined;
+    this.#bestFrame = undefined;
+    this.#lastVerificationKey = "";
+    this.#baseMosaicScore = Number.NEGATIVE_INFINITY;
+    this.#lastVerificationAt = 0;
+    this.#centreMosaicScores.fill(Number.NEGATIVE_INFINITY);
+    this.#ringMosaicScores.fill(Number.NEGATIVE_INFINITY);
+    context(this.#mosaic).clearRect(0, 0, this.#mosaic.width, this.#mosaic.height);
+  }
+
   private resetViewport(): void {
-    this.#stage.classList.remove("captured");
+    this.resetEvidence();
+    this.#stage.classList.remove("captured", "analysing");
     this.#video.style.display = "";
     this.#guide.style.display = "";
     this.#frozen.style.display = "none";
 
-    const normalisedContext = context(this.#normalised);
-    normalisedContext.clearRect(
+    context(this.#normalised).clearRect(
       0,
       0,
       this.#normalised.width,
@@ -459,11 +568,11 @@ export class Scanner {
     this.#frozen.style.display = "block";
   }
 
-  private freezeViewport(circle: Circle): void {
-    normaliseCircle(this.#capture, circle, this.#normalised);
+  private freeze(source: HTMLCanvasElement): void {
     this.stopCamera();
+    this.#stage.classList.remove("analysing");
     this.#stage.classList.add("captured");
-    this.showFrozen(this.#normalised);
+    this.showFrozen(source);
   }
 
   private scheduleAutomatic(delay = automaticInterval): void {
@@ -477,33 +586,208 @@ export class Scanner {
   }
 
   private async automaticFrame(): Promise<void> {
-    if (!this.#stream || !this.#dialog.open || this.#decoding) return;
+    if (!this.#stream || !this.#dialog.open || this.#busy) return;
+
+    this.#busy = true;
 
     try {
+      const cv = await loadOpenCv();
       captureVideo(this.#video, this.#capture);
       const circle = findOuterCircle(this.#capture);
+      const now = performance.now();
 
       if (!circle) {
+        if (this.#lastCircleAt > 0 && now - this.#lastCircleAt > evidenceResetMilliseconds) {
+          this.resetEvidence();
+        }
+
         this.message("Looking for the complete outer circle…");
-        this.scheduleAutomatic();
         return;
       }
 
-      this.#decoding = true;
-      this.freezeViewport(circle);
-      this.message(
-        "Captured. You can move the identicon now while its exact fields are reconstructed."
-      );
-      await nextPaint();
+      this.#lastCircleAt = now;
+      normaliseCircle(this.#capture, circle, this.#normalised, analysisSize);
+      const source = copyCanvas(this.#normalised, analysisSize);
+      const raw = imageData(source);
+      const rawQuality = inspectFrame(cv, raw);
 
-      const result = this.decodeCaptured();
-      this.#options.apply(result);
-      this.close();
+      if (
+        rawQuality.sharpness < 28 ||
+        rawQuality.exposure < 0.3 ||
+        rawQuality.contrast < 10 ||
+        rawQuality.edgeDensity < 0.004
+      ) {
+        this.message(qualityMessage(rawQuality));
+        return;
+      }
+
+      const observed = observePalette(raw);
+      let frame: FrameEvidence;
+
+      if (!this.#calibration) {
+        const result = calibrate(source, raw, observed, cv);
+        this.#calibration = result.calibration;
+        frame = result.frame;
+      } else {
+        frame = calibratedFrame(source, raw, observed, this.#calibration, cv);
+      }
+
+      if (!frame.quality.ready) {
+        this.message(qualityMessage(frame.quality));
+        return;
+      }
+
+      this.#stage.classList.add("analysing");
+      this.accumulateMosaic(frame);
+      this.#bestFrame = better(this.#bestFrame, frame);
+
+      const snapshot = this.#series.add({
+        at: now,
+        observations: frame.observations,
+        quality: frame.quality.score,
+        centre: frame.quality.centre,
+        ring: frame.quality.ring
+      });
+
+      this.message(progressMessage(snapshot));
+
+      if (!snapshot.ready || !snapshot.reading) return;
+      await this.tryComplete(snapshot, frame);
     } catch (error) {
-      this.processingError(error);
+      this.processingError(error, true);
     } finally {
-      this.#decoding = false;
+      this.#busy = false;
+      this.scheduleAutomatic();
     }
+  }
+
+  private accumulateMosaic(frame: FrameEvidence): void {
+    const target = context(this.#mosaic);
+    const scale = this.#mosaic.width / layoutCanvas;
+
+    const copyRegion = (
+      source: HTMLCanvasElement,
+      x: number,
+      y: number,
+      size: number
+    ): void => {
+      const padding = size * 0.28;
+      const sourceX = Math.max(0, (x - size / 2 - padding) * scale);
+      const sourceY = Math.max(0, (y - size / 2 - padding) * scale);
+      const sourceSize = Math.min(
+        this.#mosaic.width - sourceX,
+        this.#mosaic.height - sourceY,
+        (size + padding * 2) * scale
+      );
+
+      target.drawImage(
+        source,
+        sourceX,
+        sourceY,
+        sourceSize,
+        sourceSize,
+        sourceX,
+        sourceY,
+        sourceSize,
+        sourceSize
+      );
+    };
+
+    if (frame.quality.score > this.#baseMosaicScore) {
+      const previous = Number.isFinite(this.#baseMosaicScore)
+        ? copyCanvas(this.#mosaic)
+        : undefined;
+
+      this.#baseMosaicScore = frame.quality.score;
+      target.drawImage(frame.canvas, 0, 0);
+
+      if (previous) {
+        for (let index = 0; index < centreRegions.length; index += 1) {
+          if (!Number.isFinite(this.#centreMosaicScores[index]!)) continue;
+          const region = centreRegions[index]!;
+          copyRegion(previous, region.x, region.y, region.size);
+        }
+
+        for (let index = 0; index < ringRegions.length; index += 1) {
+          if (!Number.isFinite(this.#ringMosaicScores[index]!)) continue;
+          const region = ringRegions[index]!;
+          copyRegion(previous, region.x, region.y, region.size * 1.25);
+        }
+      }
+    }
+
+    for (let index = 0; index < centreRegions.length; index += 1) {
+      const score = frame.quality.centreScores[index] ?? 0;
+      if (score <= this.#centreMosaicScores[index]!) continue;
+
+      this.#centreMosaicScores[index] = score;
+      const region = centreRegions[index]!;
+      copyRegion(frame.canvas, region.x, region.y, region.size);
+    }
+
+    for (let index = 0; index < ringRegions.length; index += 1) {
+      const score = frame.quality.ringScores[index] ?? 0;
+      if (score <= this.#ringMosaicScores[index]!) continue;
+
+      this.#ringMosaicScores[index] = score;
+      const region = ringRegions[index]!;
+      copyRegion(frame.canvas, region.x, region.y, region.size * 1.25);
+    }
+  }
+
+  private async tryComplete(
+    snapshot: CaptureSnapshot,
+    current: FrameEvidence
+  ): Promise<void> {
+    const reading = snapshot.reading!;
+    const value = reading.value;
+    const verificationKey = [
+      value.seed,
+      value.solar,
+      value.lunar,
+      value.ascendant,
+      value.midheaven,
+      value.descendant,
+      value.imumCoeli,
+      snapshot.frames
+    ].join("|");
+
+    const now = performance.now();
+    if (verificationKey === this.#lastVerificationKey) return;
+    if (now - this.#lastVerificationAt < 450) return;
+
+    this.#lastVerificationKey = verificationKey;
+    this.#lastVerificationAt = now;
+
+    const paletteIndex = seedPaletteIndex(value.seed);
+    const aligned = alignPaletteToIndex(current.palette, paletteIndex);
+    const verification = await verifyExpectedSigns(
+      imageData(this.#mosaic),
+      aligned,
+      value
+    );
+
+    if (!verification.complete) {
+      this.message(
+        `${progressMessage(snapshot)} · payload recovered; verified ${verification.centreFound}/9 centre and ${verification.ringFound}/12 ring glyphs…`
+      );
+      return;
+    }
+
+    this.freeze(this.#mosaic);
+    this.message("Read complete. Applying the exact seed and signs…", "success");
+    await nextPaint();
+
+    this.#options.apply({
+      ...value,
+      paletteIndex,
+      orientation: current.angle,
+      uncertainStars: reading.uncertainStars,
+      correctedBytes: reading.erasures,
+      cumulativeFrames: snapshot.frames,
+      captureMilliseconds: Math.round(snapshot.elapsed)
+    });
+    this.close();
   }
 
   private async readPhoto(file: File): Promise<void> {
@@ -515,69 +799,75 @@ export class Scanner {
     this.message("Opening the selected photo…");
 
     try {
+      const cv = await loadOpenCv();
       const image = await loadImage(file);
       captureImage(image, this.#capture);
       const circle = findOuterCircle(this.#capture) ?? guideCircle(this.#capture);
+      normaliseCircle(this.#capture, circle, this.#normalised, analysisSize);
+      const source = copyCanvas(this.#normalised, analysisSize);
+      const raw = imageData(source);
+      const observed = observePalette(raw);
+      const result = calibrate(source, raw, observed, cv);
+      const frame = result.frame;
 
-      this.#decoding = true;
-      this.freezeViewport(circle);
-      this.message("Photo framed. Reconstructing its exact fields…");
+      if (!frame.quality.ready) {
+        throw new Error("The selected photo is too blurred, clipped or incomplete to reconstruct safely");
+      }
+
+      const reading = frame.reading ?? recoverSeedObservations(frame.observations);
+      const paletteIndex = seedPaletteIndex(reading.value.seed);
+      const aligned = alignPaletteToIndex(frame.palette, paletteIndex);
+      const verification = await verifyExpectedSigns(
+        frame.data,
+        aligned,
+        reading.value
+      );
+
+      if (!verification.complete) {
+        throw new Error("The selected photo does not contain every expected identicon element clearly enough");
+      }
+
+      this.freeze(frame.canvas);
+      this.message("Photo verified. Applying its exact fields…", "success");
       await nextPaint();
 
-      const result = this.decodeCaptured();
-      this.#options.apply(result);
+      this.#options.apply({
+        ...reading.value,
+        paletteIndex,
+        orientation: frame.angle,
+        uncertainStars: reading.uncertainStars,
+        correctedBytes: reading.erasures,
+        cumulativeFrames: 1,
+        captureMilliseconds: 0
+      });
       this.close();
     } finally {
-      this.#decoding = false;
+      this.#busy = false;
       this.#upload.disabled = false;
     }
   }
 
-  private decodeCaptured(): ScanResult {
-    const rawData = imageData(this.#normalised);
-    const observed = observePalette(rawData);
-    const candidate = bestPayload(this.#normalised, rawData, observed);
-    const reading = candidate.reading;
-    const value = reading.value;
-
-    const normalisedContext = context(this.#normalised);
-    normalisedContext.clearRect(
-      0,
-      0,
-      this.#normalised.width,
-      this.#normalised.height
-    );
-    normalisedContext.drawImage(candidate.canvas, 0, 0);
-    this.showFrozen(this.#normalised);
-
-    return {
-      ...value,
-      paletteIndex: seedPaletteIndex(value.seed),
-      orientation: candidate.angle,
-      uncertainStars: reading.uncertainStars,
-      correctedBytes: reading.erasures
-    };
-  }
-
-  private message(value: string, busy = true): void {
-    this.#status.textContent = value;
-    this.#status.className = busy ? "scan-status busy" : "scan-status success";
-  }
-
   private cameraError(error: unknown): void {
     this.stopCamera();
-    this.#status.textContent = `${cameraErrorMessage(error)} A saved photo can still be scanned.`;
-    this.#status.className = "scan-status error";
+    this.message(cameraErrorMessage(error), "error");
+    this.#upload.disabled = false;
   }
 
-  private processingError(error: unknown): void {
-    const message = error instanceof Error ? error.message : String(error);
-    const frozen = this.#stage.classList.contains("captured");
+  private processingError(error: unknown, recoverable = false): void {
+    const value = error instanceof Error ? error.message : String(error);
 
-    this.#status.textContent = frozen
-      ? `${message}. The frame is frozen; close and scan again, or choose another photo.`
-      : message;
-    this.#status.className = "scan-status error";
+    if (recoverable && this.#stream && this.#dialog.open) {
+      this.message(`Still collecting: ${value}`);
+      return;
+    }
+
+    this.stopCamera();
+    this.message(value, "error");
     this.#upload.disabled = false;
+  }
+
+  private message(value: string, state: "" | "error" | "success" = ""): void {
+    this.#status.textContent = value;
+    this.#status.className = `scan-status${state ? ` ${state}` : ""}`;
   }
 }

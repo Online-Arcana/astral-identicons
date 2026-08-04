@@ -1,12 +1,13 @@
 {
   "name": "astrological-identicon",
-  "version": "0.8.1",
+  "version": "0.9.0",
   "private": true,
   "type": "module",
   "scripts": {
     "start": "bun run src/server.ts",
     "dev": "bun --watch src/server.ts",
     "identicon": "bun run src/cli.ts",
+    "palette:tune": "bun run scripts/tune-palette.ts",
     "build:pages": "bun run scripts/build-pages.ts",
     "test": "bun test",
     "check": "bunx tsc --noEmit"
