@@ -27,7 +27,7 @@ function counterBytes(value: number): Uint8Array {
 export class DeterministicRandom {
   readonly #key: Uint8Array;
   #counter = 0;
-  #pool = new Uint8Array();
+  #pool = new Uint8Array(0);
   #offset = 0;
 
   constructor(domain: string, seed: string, nonce: string) {
@@ -68,7 +68,7 @@ export class DeterministicRandom {
     ));
 
     this.#counter = (this.#counter + 1) >>> 0;
-    this.#pool = block;
+    this.#pool = new Uint8Array(block);
     this.#offset = 0;
   }
 }
