@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { astralInput } from "./astral.ts";
 import { fileAssets } from "./assets.ts";
 import { buildIdenticon } from "./build.ts";
@@ -72,8 +73,7 @@ async function fromAstral(args: Arguments): Promise<IdenticonInput | null> {
     throw new Error(`--${conflict} cannot override an --astral identity header`);
   }
 
-  const bytes = new Uint8Array(await Bun.file(path).arrayBuffer());
-  return astralInput(bytes);
+  return astralInput(new Uint8Array(await readFile(path)));
 }
 
 async function raw(args: Arguments): Promise<RawIdenticonInput> {
