@@ -1,14 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import { buildIdenticon } from "../src/build.ts";
 import {
-  codeAnchorPoint,
-  codeAnchors,
   codeSectorCount,
   codeSlotPoint,
   codeSymbolPoint,
   codeSymbolSpacing,
   codeTrackCount,
-  innerClipRadius
+  innerClipRadius,
+  northStar,
+  northStarPoint
 } from "../src/code-layout.ts";
 import { input } from "../src/input.ts";
 import { centre, ringPlacements } from "../src/layout.ts";
@@ -68,18 +68,20 @@ function spread(count: number): Set<number> {
   return indexes;
 }
 
-describe("star recovery record", () => {
-  test("uses the existing 128 stars as an RS(128,40) record", () => {
+describe("parity-star recovery record", () => {
+  test("renders 128 parity bytes rather than a systematic data copy", () => {
     const codeword = starParityCodeword(sample);
+    const payload = seedPayload(sample);
 
     expect(codeword.length).toBe(128);
-    expect(starParityExpansionByteCount).toBe(88);
-    expect([...codeword.slice(0, seedDataByteCount)]).toEqual([
-      ...seedPayload(sample)
-    ]);
+    expect(starParityExpansionByteCount).toBe(128);
+    expect(
+      JSON.stringify([...codeword.slice(0, seedDataByteCount)]) ===
+      JSON.stringify([...payload])
+    ).toBe(false);
   });
 
-  test("reconstructs the complete identity from any forty reliable stars", () => {
+  test("reconstructs the complete identity from any forty reliable parity stars", () => {
     const codeword = starParityCodeword(sample);
     const observations = selectedStars(codeword, spread(seedDataByteCount));
     const recovered = recoverStarParity(observations);
@@ -103,7 +105,7 @@ describe("star recovery record", () => {
       message = error instanceof Error ? error.message : String(error);
     }
 
-    expect(message).toContain("at least 40 readable stars");
+    expect(message).toContain("at least 40 readable parity stars");
   });
 
   test("rejects seeds that cannot fit exactly in the record", () => {
@@ -134,7 +136,7 @@ describe("visual scanner geometry", () => {
     expect(points.size).toBe(seedSlotCount);
   });
 
-  test("gives every star sixteen distinct position values", () => {
+  test("gives every parity star sixteen distinct position values", () => {
     for (let slot = 0; slot < seedSlotCount; slot += 1) {
       const positions = new Set<string>();
 
@@ -149,7 +151,7 @@ describe("visual scanner geometry", () => {
     expect(codeSymbolSpacing).toBe(10);
   });
 
-  test("keeps every recovery-star position inside the inner clipping circle", () => {
+  test("keeps every parity-star position inside the inner clipping circle", () => {
     for (let slot = 0; slot < seedSlotCount; slot += 1) {
       for (let value = 0; value < 16; value += 1) {
         const point = codeSymbolPoint(slot, value);
@@ -159,13 +161,13 @@ describe("visual scanner geometry", () => {
     }
   });
 
-  test("uses asymmetric registration anchors", () => {
-    const keys = new Set(codeAnchors.map((anchor) => {
-      const point = codeAnchorPoint(anchor);
-      return `${point.x.toFixed(3)}:${point.y.toFixed(3)}:${anchor.size}`;
-    }));
+  test("uses one invariant North Star at the top as the calibration reference", () => {
+    const point = northStarPoint();
 
-    expect(keys.size).toBe(3);
+    expect(point.x).toBe(centre);
+    expect(point.y < centre).toBe(true);
+    expect(northStar.size).toBe(28);
+    expect(northStar.opacity).toBe(1);
   });
 
   test("places Imum Coeli left and Descendant right on the ring", () => {
@@ -213,10 +215,14 @@ describe("builder", () => {
 
     expect(first).toBe(second);
     expect(first).toContain('viewBox="0 0 1024 1024"');
-    expect(first).toContain('data-code-version="7"');
+    expect(first).toContain('data-code-version="8"');
     expect(first).toContain('id="recovery-stars"');
-    expect(first).toContain('data-code="reed-solomon-star-record-128-40-v7"');
+    expect(first).toContain('data-code="reed-solomon-parity-stars-128-v8"');
     expect(first).toContain('data-code-minimum-readable-stars="40"');
+    expect(first).toContain('id="north-star-reference"');
+    expect(first).toContain('data-reference-position="top"');
+    expect(first).toContain('data-reference-size="28"');
+    expect(first).toContain('data-reference-opacity="1"');
     expect(first.includes('id="glyph-data"')).toBe(false);
     expect(first.includes("data-glyph-mark")).toBe(false);
     expect(first.includes("<line")).toBe(false);
