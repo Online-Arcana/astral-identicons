@@ -1,5 +1,5 @@
 import { seedPaletteIndex } from "./seed.ts";
-import type { Palette, PaletteColour } from "./types.ts";
+import type { IdenticonInput, Palette, PaletteColour } from "./types.ts";
 
 interface Rgb {
   r: number;
@@ -173,6 +173,6 @@ export function paletteIndexFromReduced(
   return index;
 }
 
-export function palette(seed: string): Palette {
+export function palette(seed: string | IdenticonInput): Palette {
   return paletteForIndex(seedPaletteIndex(seed));
 }
