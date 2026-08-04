@@ -166,7 +166,7 @@ describe("visual scanner geometry", () => {
 
     expect(point.x).toBe(centre);
     expect(point.y < centre).toBe(true);
-    expect(northStar.size).toBe(28);
+    expect(northStar.size).toBe(34);
     expect(northStar.opacity).toBe(1);
   });
 
@@ -221,7 +221,7 @@ describe("builder", () => {
     expect(first).toContain('data-code-minimum-readable-stars="40"');
     expect(first).toContain('id="north-star-reference"');
     expect(first).toContain('data-reference-position="top"');
-    expect(first).toContain('data-reference-size="28"');
+    expect(first).toContain('data-reference-size="34"');
     expect(first).toContain('data-reference-opacity="1"');
     expect(first.includes('id="glyph-data"')).toBe(false);
     expect(first.includes("data-glyph-mark")).toBe(false);
