@@ -1,5 +1,6 @@
 import configuration from "../config/palette-targets.json";
 import { defaultNonce } from "./prng.ts";
+import type { IdenticonInput } from "./types.ts";
 
 interface PaletteTarget {
   readonly nonce: string;
@@ -24,8 +25,13 @@ for (const [seed, value] of Object.entries(config.targets)) {
   }
 }
 
-export function paletteNonce(seed: string): string {
-  return config.targets[seed]?.nonce ?? defaultNonce(seed);
+export function paletteNonce(
+  seed: string | Uint8Array,
+  value?: Pick<IdenticonInput, "seed" | "seedKind">
+): string {
+  if (typeof seed === "string") return config.targets[seed]?.nonce ?? defaultNonce(seed);
+  if (value?.seedKind === "text") return config.targets[value.seed]?.nonce ?? defaultNonce(seed);
+  return defaultNonce(seed);
 }
 
 export function configuredPaletteNonce(seed: string): string | undefined {
