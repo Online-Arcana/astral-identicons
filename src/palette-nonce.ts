@@ -24,8 +24,9 @@ for (const [seed, value] of Object.entries(config.targets)) {
   }
 }
 
-export function paletteNonce(seed: string): string {
-  return config.targets[seed]?.nonce ?? defaultNonce(seed);
+export function paletteNonce(seed: string | Uint8Array): string {
+  if (typeof seed === "string") return config.targets[seed]?.nonce ?? defaultNonce(seed);
+  return defaultNonce(seed);
 }
 
 export function configuredPaletteNonce(seed: string): string | undefined {

@@ -190,8 +190,8 @@ function glyphData(value: IdenticonInput, colour: string, background: string): s
 }
 
 export async function buildIdenticon(value: IdenticonInput, assets: AssetSource): Promise<string> {
-  const paletteIndex = seedPaletteIndex(value.seed);
-  const colours = palette(value.seed);
+  const paletteIndex = seedPaletteIndex(value);
+  const colours = palette(value);
 
   const backgroundSource = await assets.constellation(value.solar);
   const backgroundAsset = parseSvg(backgroundSource);

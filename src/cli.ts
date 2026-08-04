@@ -1,7 +1,8 @@
+import { astralInput } from "./astral.ts";
 import { fileAssets } from "./assets.ts";
 import { buildIdenticon } from "./build.ts";
 import { input } from "./input.ts";
-import type { RawIdenticonInput } from "./types.ts";
+import type { IdenticonInput, RawIdenticonInput } from "./types.ts";
 
 interface Arguments {
   values: Record<string, string>;
@@ -11,6 +12,10 @@ interface Arguments {
 const help = `Astrological identicon builder
 
 Usage:
+  bun run src/cli.ts --astral profile.astral \\
+    [--out identicon.svg] [--assets ./assets]
+
+Manual input:
   bun run src/cli.ts \\
     --seed <value> \\
     --solar <sign> --lunar <sign> \\
@@ -47,6 +52,30 @@ function argumentsOf(values: string[]): Arguments {
   return parsed;
 }
 
+async function fromAstral(args: Arguments): Promise<IdenticonInput | null> {
+  const path = args.values.astral;
+  if (!path) return null;
+
+  const forbidden = [
+    "json",
+    "seed",
+    "solar",
+    "lunar",
+    "ascendant",
+    "midheaven",
+    "descendant",
+    "imum-coeli",
+    "imumCoeli"
+  ];
+  const conflict = forbidden.find((name) => args.values[name] !== undefined);
+  if (conflict) {
+    throw new Error(`--${conflict} cannot override an --astral identity header`);
+  }
+
+  const bytes = new Uint8Array(await Bun.file(path).arrayBuffer());
+  return astralInput(bytes);
+}
+
 async function raw(args: Arguments): Promise<RawIdenticonInput> {
   let fileInput: Partial<RawIdenticonInput> = {};
 
@@ -76,7 +105,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  const value = input(await raw(args));
+  const value = await fromAstral(args) ?? input(await raw(args));
   const assetsRoot = args.values.assets ?? `${import.meta.dir}/../assets`;
   const svg = await buildIdenticon(value, fileAssets(assetsRoot));
   const output = args.values.out;

@@ -15,6 +15,10 @@ function concatenate(...values: readonly Uint8Array[]): Uint8Array {
   return result;
 }
 
+function bytes(value: string | Uint8Array): Uint8Array {
+  return typeof value === "string" ? encoder.encode(value) : value;
+}
+
 function counterBytes(value: number): Uint8Array {
   return new Uint8Array([
     value >>> 24,
@@ -30,8 +34,12 @@ export class DeterministicRandom {
   #pool = new Uint8Array(0);
   #offset = 0;
 
-  constructor(domain: string, seed: string, nonce: string) {
-    this.#key = sha256(`${domain}\u0000${seed}\u0000${nonce}`);
+  constructor(domain: string, seed: string | Uint8Array, nonce: string) {
+    this.#key = sha256(concatenate(
+      encoder.encode(`${domain}\u0000`),
+      bytes(seed),
+      encoder.encode(`\u0000${nonce}`)
+    ));
   }
 
   byte(): number {
@@ -73,11 +81,14 @@ export class DeterministicRandom {
   }
 }
 
-export function defaultNonce(seed: string): string {
-  return hexBytes(sha256(`astral-identicon/palette-nonce/v1\u0000${seed}`));
+export function defaultNonce(seed: string | Uint8Array): string {
+  return hexBytes(sha256(concatenate(
+    encoder.encode("astral-identicon/palette-nonce/v1\u0000"),
+    bytes(seed)
+  )));
 }
 
-export function paletteDraw(seed: string, nonce: string, count: number): number {
+export function paletteDraw(seed: string | Uint8Array, nonce: string, count: number): number {
   return new DeterministicRandom(
     "astral-identicon/palette/v6",
     seed,

@@ -10,6 +10,7 @@ declare const Bun: {
   argv: string[];
   env: Record<string, string | undefined>;
   file(path: string): {
+    arrayBuffer(): Promise<ArrayBuffer>;
     text(): Promise<string>;
     json(): Promise<unknown>;
     exists(): Promise<boolean>;

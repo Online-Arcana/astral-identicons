@@ -1,7 +1,14 @@
+import { astralInput } from "./astral.ts";
 import { buildIdenticon } from "./build.ts";
 import { palette } from "./palette.ts";
 import { Scanner } from "./scan.ts";
 import { seedPaletteIndex } from "./seed.ts";
+import {
+  base64Url,
+  bindPublicKey,
+  boundPublicKey,
+  isPublicKey
+} from "./seed-value.ts";
 import { label, signs, type Sign } from "./sign.ts";
 import type { AssetSource, IdenticonInput } from "./types.ts";
 
@@ -25,6 +32,19 @@ const fields = [
 ] as const;
 
 const form = document.querySelector<HTMLFormElement>("#builder")!;
+const astralWrap = document.createElement("div");
+const astralLabel = document.createElement("label");
+const astralFile = document.createElement("input");
+astralWrap.className = "field";
+astralLabel.htmlFor = "astral-file";
+astralLabel.textContent = "Packaged astral file";
+astralFile.id = "astral-file";
+astralFile.type = "file";
+astralFile.accept = ".astral,application/octet-stream";
+astralWrap.append(astralLabel, astralFile);
+form.prepend(astralWrap);
+
+const seedField = document.querySelector<HTMLInputElement>("#seed")!;
 const fieldHost = document.querySelector<HTMLDivElement>("#sign-fields")!;
 const preview = document.querySelector<HTMLDivElement>("#preview")!;
 const paletteHost = document.querySelector<HTMLDivElement>("#palette")!;
@@ -46,6 +66,7 @@ const assetCache = new Map<string, Promise<string>>();
 let renderVersion = 0;
 let latestSvg = "";
 let assetsWarmed = false;
+let activeRaw: Uint8Array | undefined;
 
 for (const [name, title] of fields) {
   const wrapper = document.createElement("div");
@@ -73,8 +94,7 @@ for (const [name, title] of fields) {
 
 function value(): IdenticonInput {
   const data = new FormData(form);
-
-  return {
+  const result: IdenticonInput = {
     seed: String(data.get("seed") ?? "").trim(),
     solar: String(data.get("solar")) as Sign,
     lunar: String(data.get("lunar")) as Sign,
@@ -83,10 +103,16 @@ function value(): IdenticonInput {
     descendant: String(data.get("descendant")) as Sign,
     imumCoeli: String(data.get("imumCoeli")) as Sign
   };
+
+  if (activeRaw && base64Url(activeRaw) === result.seed) {
+    return bindPublicKey(result, activeRaw);
+  }
+  return result;
 }
 
 function apply(value: IdenticonInput): void {
-  form.querySelector<HTMLInputElement>("#seed")!.value = value.seed;
+  activeRaw = boundPublicKey(value);
+  seedField.value = value.seed;
 
   for (const [name] of fields) {
     form.querySelector<HTMLSelectElement>(`#${name}`)!.value = value[name];
@@ -196,10 +222,11 @@ async function render(): Promise<void> {
 
   latestSvg = svg;
   showSvg(svg);
-  showPalette(palette(data.seed));
+  showPalette(palette(data));
 
-  const paletteIndex = seedPaletteIndex(data.seed);
-  status.textContent = `The exact seed and all six signs are distributed across the glyph carriers. The parity stars repair missing or ambiguous glyph bytes. Palette ${paletteIndex.toString(16).padStart(2, "0").toUpperCase()}, the constellation and the duplicated signs provide independent recognition evidence.`;
+  const paletteIndex = seedPaletteIndex(data);
+  const seedLabel = isPublicKey(data.seed) ? "public key" : "exact seed";
+  status.textContent = `The ${seedLabel} and all six signs are distributed across the glyph carriers. The parity stars repair missing or ambiguous glyph bytes. Palette ${paletteIndex.toString(16).padStart(2, "0").toUpperCase()}, the constellation and the duplicated signs provide independent recognition evidence.`;
   status.className = "status";
 }
 
@@ -227,13 +254,36 @@ const scanner = new Scanner({
     apply(result);
 
     void render().then(() => {
-      status.textContent = `Camera recovered the exact seed "${result.seed}" and all six signs from ${result.cumulativeFrames} useful capture${result.cumulativeFrames === 1 ? "" : "s"}. ${correctionSummary(result.correctedBytes)}`;
+      const recovered = isPublicKey(result.seed) ? "public key" : "exact seed";
+      status.textContent = `Camera recovered the ${recovered} "${result.seed}" and all six signs from ${result.cumulativeFrames} useful capture${result.cumulativeFrames === 1 ? "" : "s"}. ${correctionSummary(result.correctedBytes)}`;
       status.className = "status";
     }).catch(showError);
   }
 });
 
-form.addEventListener("input", schedule);
+form.addEventListener("input", (event) => {
+  if (event.target === seedField) {
+    activeRaw = undefined;
+    astralFile.value = "";
+  }
+  schedule();
+});
+
+astralFile.addEventListener("change", () => {
+  const selected = astralFile.files?.[0];
+  if (!selected) return;
+
+  status.textContent = "Reading packaged astral header locally...";
+  status.className = "status";
+  void selected.arrayBuffer().then((buffer) => {
+    const data = astralInput(new Uint8Array(buffer));
+    apply(data);
+    return render();
+  }).then(() => {
+    status.textContent = "Loaded the exact raw Ed25519 public key and all six signs from the packaged astral file. The encrypted payload was not opened or changed.";
+    status.className = "status";
+  }).catch(showError);
+});
 
 scan.addEventListener("click", () => {
   warmAssets();
@@ -247,7 +297,9 @@ function randomSeed(): string {
 }
 
 randomButton.addEventListener("click", () => {
-  form.querySelector<HTMLInputElement>("#seed")!.value = randomSeed();
+  activeRaw = undefined;
+  seedField.value = randomSeed();
+  astralFile.value = "";
   schedule();
 });
 
@@ -284,7 +336,9 @@ form.addEventListener("submit", async (event) => {
     link.click();
 
     window.setTimeout(() => URL.revokeObjectURL(url), 0);
-    status.textContent = "Saved standalone SVG with the exact recoverable seed and signs.";
+    status.textContent = isPublicKey(data.seed)
+      ? "Saved standalone SVG with the exact recoverable public key and signs."
+      : "Saved standalone SVG with the exact recoverable seed and signs.";
   } catch (error) {
     showError(error);
   } finally {
