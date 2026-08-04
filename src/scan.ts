@@ -27,7 +27,7 @@ import {
   type NibbleObservation,
   type SeedReading
 } from "./scan-seed.ts";
-import { classifySigns, type SignReading } from "./scan-sign.ts";
+import { verifyExpectedSigns } from "./scan-verify.ts";
 import { seedPaletteIndex } from "./seed.ts";
 import type { IdenticonInput } from "./types.ts";
 
@@ -72,14 +72,13 @@ const evidenceResetMilliseconds = 1_500;
 const analysisSize = 512;
 const orientationOffsets = [0, 90, 180, 270] as const;
 const fineOffsets = [0, -1.5, 1.5] as const;
-const verificationConfidence = 0.004;
 const layoutPlaceholder: IdenticonInput = {
   seed: "capture-layout",
   solar: "aries",
   lunar: "aries",
   ascendant: "aries",
   midheaven: "aries",
-  descendant: "aries",
+  descendant: "cancer",
   imumCoeli: "aries"
 };
 const centreRegions = placements(layoutPlaceholder);
@@ -329,34 +328,6 @@ function qualityMessage(quality: FrameQuality): string {
   return "Identicon found. Collecting clear details across several frames…";
 }
 
-function signRoles(value: IdenticonInput): readonly [
-  keyof Omit<IdenticonInput, "seed">,
-  string
-][] {
-  return [
-    ["solar", value.solar],
-    ["lunar", value.lunar],
-    ["ascendant", value.ascendant],
-    ["midheaven", value.midheaven],
-    ["descendant", value.descendant],
-    ["imumCoeli", value.imumCoeli]
-  ];
-}
-
-function signsVerified(reading: SignReading, value: IdenticonInput): boolean {
-  if (reading.constellation.sign !== value.solar) return false;
-  if (reading.constellation.score < 0.08) return false;
-
-  for (const [role, expected] of signRoles(value)) {
-    const observed = reading[role];
-    if (observed.sign !== expected) return false;
-    if (observed.score < 0.07) return false;
-    if (observed.confidence < verificationConfidence) return false;
-  }
-
-  return true;
-}
-
 function progressMessage(snapshot: CaptureSnapshot): string {
   const seconds = Math.min(5, snapshot.elapsed / 1_000).toFixed(1);
   const stars = `${snapshot.observedStars}/128 stars`;
@@ -395,6 +366,7 @@ export class Scanner {
   #bestFrame: FrameEvidence | undefined;
   #lastVerificationKey = "";
   #baseMosaicScore = Number.NEGATIVE_INFINITY;
+  #lastVerificationAt = 0;
 
   constructor(options: ScannerOptions) {
     this.#options = options;
@@ -479,10 +451,8 @@ export class Scanner {
     }
 
     try {
-      const [stream] = await Promise.all([
-        requestCamera(devices),
-        loadOpenCv()
-      ]);
+      const cvRequest = loadOpenCv();
+      const stream = await requestCamera(devices);
 
       if (session !== this.#session || !this.#dialog.open) {
         stopStream(stream);
@@ -493,6 +463,7 @@ export class Scanner {
       this.#video.srcObject = stream;
       await startVideo(this.#video);
       await this.configureCamera(stream);
+      await cvRequest;
 
       if (session !== this.#session || !this.#dialog.open) {
         this.stop();
@@ -563,6 +534,7 @@ export class Scanner {
     this.#bestFrame = undefined;
     this.#lastVerificationKey = "";
     this.#baseMosaicScore = Number.NEGATIVE_INFINITY;
+    this.#lastVerificationAt = 0;
     this.#centreMosaicScores.fill(Number.NEGATIVE_INFINITY);
     this.#ringMosaicScores.fill(Number.NEGATIVE_INFINITY);
     context(this.#mosaic).clearRect(0, 0, this.#mosaic.width, this.#mosaic.height);
@@ -761,16 +733,24 @@ export class Scanner {
       snapshot.frames
     ].join("|");
 
+    const now = performance.now();
     if (verificationKey === this.#lastVerificationKey) return;
+    if (now - this.#lastVerificationAt < 450) return;
+
     this.#lastVerificationKey = verificationKey;
+    this.#lastVerificationAt = now;
 
     const paletteIndex = seedPaletteIndex(value.seed);
     const aligned = alignPaletteToIndex(current.palette, paletteIndex);
-    const verification = await classifySigns(imageData(this.#mosaic), aligned);
+    const verification = await verifyExpectedSigns(
+      imageData(this.#mosaic),
+      aligned,
+      value
+    );
 
-    if (!signsVerified(verification, value)) {
+    if (!verification.complete) {
       this.message(
-        `${progressMessage(snapshot)} · payload recovered; collecting clearer sign evidence…`
+        `${progressMessage(snapshot)} · payload recovered; verified ${verification.centreFound}/9 centre and ${verification.ringFound}/12 ring glyphs…`
       );
       return;
     }
@@ -819,9 +799,13 @@ export class Scanner {
       const reading = frame.reading ?? recoverSeedObservations(frame.observations);
       const paletteIndex = seedPaletteIndex(reading.value.seed);
       const aligned = alignPaletteToIndex(frame.palette, paletteIndex);
-      const verification = await classifySigns(frame.data, aligned);
+      const verification = await verifyExpectedSigns(
+        frame.data,
+        aligned,
+        reading.value
+      );
 
-      if (!signsVerified(verification, reading.value)) {
+      if (!verification.complete) {
         throw new Error("The selected photo does not contain every expected identicon element clearly enough");
       }
 
