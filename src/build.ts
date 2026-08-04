@@ -156,14 +156,13 @@ function glyphData(value: IdenticonInput, colour: string, background: string): s
     const digits = glyphCarrierDigits(value, carrier);
     const marks = digits.map((digit, index) => {
       const actual = glyphMark(carrier, index, digit);
-      const maximum = glyphMark(carrier, index, 3);
 
       return `<g data-glyph-mark="${index}" data-glyph-digit="${digit}">
         <line
-          x1="${maximum.startX}"
-          y1="${maximum.startY}"
-          x2="${maximum.endX}"
-          y2="${maximum.endY}"
+          x1="${actual.startX}"
+          y1="${actual.startY}"
+          x2="${actual.endX}"
+          y2="${actual.endY}"
           stroke="${background}"
           stroke-width="${glyphMarkHaloStroke}"
           stroke-linecap="round"
