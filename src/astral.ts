@@ -1,5 +1,5 @@
 import { input } from "./input.ts";
-import { base64Url } from "./seed-value.ts";
+import { base64Url, bindPublicKey } from "./seed-value.ts";
 import type { IdenticonInput } from "./types.ts";
 
 const decoder = new TextDecoder("utf-8", { fatal: true });
@@ -89,7 +89,7 @@ export function astralInput(data: Uint8Array): IdenticonInput {
 
   const rawKey = data.slice(keyOffset, keyOffset + keySize);
   const values = publicSigns(data.slice(signOffset, headSize));
-  return input({
+  const value = input({
     seed: base64Url(rawKey),
     solar: values.solar,
     lunar: values.lunar,
@@ -98,4 +98,5 @@ export function astralInput(data: Uint8Array): IdenticonInput {
     descendant: values.descendant,
     imumCoeli: values.imumCoeli
   });
+  return bindPublicKey(value, rawKey);
 }
