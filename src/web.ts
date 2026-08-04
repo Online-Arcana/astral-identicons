@@ -2,7 +2,7 @@ import { astralInput } from "./astral.ts";
 import { buildIdenticon } from "./build.ts";
 import { palette } from "./palette.ts";
 import { Scanner } from "./scan.ts";
-import { seedPaletteIndex } from "./seed.ts";
+import { seedDataByteCount, seedPaletteIndex, seedSlotCount } from "./seed.ts";
 import {
   base64Url,
   bindPublicKey,
@@ -11,16 +11,6 @@ import {
 } from "./seed-value.ts";
 import { label, signs, type Sign } from "./sign.ts";
 import type { AssetSource, IdenticonInput } from "./types.ts";
-
-const defaults: IdenticonInput = {
-  seed: "62-70-F2-Example",
-  solar: "capricorn",
-  lunar: "virgo",
-  ascendant: "capricorn",
-  midheaven: "libra",
-  descendant: "cancer",
-  imumCoeli: "aries"
-};
 
 const fields = [
   ["solar", "Sun"],
@@ -31,6 +21,38 @@ const fields = [
   ["imumCoeli", "Imum Coeli"]
 ] as const;
 
+function randomByte(limit: number): number {
+  const maximum = Math.floor(256 / limit) * limit;
+  const buffer = new Uint8Array(1);
+
+  while (true) {
+    crypto.getRandomValues(buffer);
+    const value = buffer[0]!;
+    if (value < maximum) return value % limit;
+  }
+}
+
+function randomSign(): Sign {
+  return signs[randomByte(signs.length)]!;
+}
+
+function randomPublicKey(): string {
+  return base64Url(crypto.getRandomValues(new Uint8Array(32)));
+}
+
+function randomInput(): IdenticonInput {
+  return {
+    seed: randomPublicKey(),
+    solar: randomSign(),
+    lunar: randomSign(),
+    ascendant: randomSign(),
+    midheaven: randomSign(),
+    descendant: randomSign(),
+    imumCoeli: randomSign()
+  };
+}
+
+const defaults = randomInput();
 const form = document.querySelector<HTMLFormElement>("#builder")!;
 const astralWrap = document.createElement("div");
 const astralLabel = document.createElement("label");
@@ -54,6 +76,7 @@ const scan = document.querySelector<HTMLButtonElement>("#scan")!;
 const randomButton = document.querySelector<HTMLButtonElement>("#random")!;
 const previewPanel = preview.closest<HTMLElement>(".preview-panel")!;
 
+seedField.value = defaults.seed;
 previewPanel.style.display = "grid";
 previewPanel.style.justifyItems = "center";
 preview.style.inlineSize = "min(100%, 70vmin, 32rem)";
@@ -62,7 +85,6 @@ preview.style.marginInline = "auto";
 paletteHost.style.inlineSize = "100%";
 
 const assetCache = new Map<string, Promise<string>>();
-
 let renderVersion = 0;
 let latestSvg = "";
 let assetsWarmed = false;
@@ -110,12 +132,12 @@ function value(): IdenticonInput {
   return result;
 }
 
-function apply(value: IdenticonInput): void {
-  activeRaw = boundPublicKey(value);
-  seedField.value = value.seed;
+function apply(input: IdenticonInput): void {
+  activeRaw = boundPublicKey(input);
+  seedField.value = input.seed;
 
   for (const [name] of fields) {
-    form.querySelector<HTMLSelectElement>(`#${name}`)!.value = value[name];
+    form.querySelector<HTMLSelectElement>(`#${name}`)!.value = input[name];
   }
 }
 
@@ -200,7 +222,6 @@ function showSvg(source: string): void {
 
   const root = documentValue.documentElement;
   if (root.localName !== "svg") throw new Error("Generated output is not an SVG document");
-
   preview.replaceChildren(document.importNode(root, true));
 }
 
@@ -225,8 +246,8 @@ async function render(): Promise<void> {
   showPalette(palette(data));
 
   const paletteIndex = seedPaletteIndex(data);
-  const seedLabel = isPublicKey(data.seed) ? "public key" : "exact seed";
-  status.textContent = `The ${seedLabel} and all six signs are distributed across the glyph carriers. The parity stars repair missing or ambiguous glyph bytes. Palette ${paletteIndex.toString(16).padStart(2, "0").toUpperCase()}, the constellation and the duplicated signs provide independent recognition evidence.`;
+  const seedLabel = isPublicKey(data.seed) ? "32-byte public key" : "exact seed";
+  status.textContent = `The ${seedLabel} and all six signs are protected across ${seedSlotCount} existing stars; any ${seedDataByteCount} reliable stars can reconstruct the complete record. Palette ${paletteIndex.toString(16).padStart(2, "0").toUpperCase()}, the Solar constellation, centre grid and ring independently verify it. No additional data marks are drawn.`;
   status.className = "status";
 }
 
@@ -236,7 +257,6 @@ function showError(error: unknown): void {
 }
 
 let timer = 0;
-
 function schedule(): void {
   window.clearTimeout(timer);
   timer = window.setTimeout(() => {
@@ -244,9 +264,10 @@ function schedule(): void {
   }, 90);
 }
 
-function correctionSummary(bytes: number): string {
-  if (bytes === 0) return "No glyph bytes needed parity repair.";
-  return `Parity stars repaired ${bytes} glyph data byte${bytes === 1 ? "" : "s"}.`;
+function recoverySummary(stars: number): string {
+  return stars === 0
+    ? "No star symbols needed reconstruction."
+    : `Reed–Solomon reconstructed ${stars} missing or discarded star symbol${stars === 1 ? "" : "s"}.`;
 }
 
 const scanner = new Scanner({
@@ -255,7 +276,7 @@ const scanner = new Scanner({
 
     void render().then(() => {
       const recovered = isPublicKey(result.seed) ? "public key" : "exact seed";
-      status.textContent = `Camera recovered the ${recovered} "${result.seed}" and all six signs from ${result.cumulativeFrames} useful capture${result.cumulativeFrames === 1 ? "" : "s"}. ${correctionSummary(result.correctedBytes)}`;
+      status.textContent = `Camera recovered the ${recovered} "${result.seed}" and all six signs from ${result.cumulativeFrames} useful capture${result.cumulativeFrames === 1 ? "" : "s"}. ${recoverySummary(result.reconstructedStars)}`;
       status.className = "status";
     }).catch(showError);
   }
@@ -290,15 +311,9 @@ scan.addEventListener("click", () => {
   void scanner.open().catch(showError);
 });
 
-function randomSeed(): string {
-  return [...crypto.getRandomValues(new Uint8Array(16))]
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
-}
-
 randomButton.addEventListener("click", () => {
   activeRaw = undefined;
-  seedField.value = randomSeed();
+  seedField.value = randomPublicKey();
   astralFile.value = "";
   schedule();
 });
@@ -308,13 +323,11 @@ function fileSeed(seed: string): string {
     .replace(/[^a-z0-9]+/giu, "-")
     .replace(/^-+|-+$/gu, "")
     .slice(0, 32);
-
   return safe || "seed";
 }
 
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
-
   save.disabled = true;
   status.textContent = "Preparing SVG...";
   status.className = "status";
@@ -327,7 +340,6 @@ form.addEventListener("submit", async (event) => {
     const blob = new Blob([latestSvg], {
       type: "image/svg+xml;charset=utf-8"
     });
-
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
 
