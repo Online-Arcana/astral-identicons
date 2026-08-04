@@ -1,7 +1,7 @@
 import { paletteNonce } from "./palette-nonce.ts";
 import { paletteDraw } from "./prng.ts";
 import { rsEncode, rsRecoverErasures, rsValid } from "./rs.ts";
-import { base64Url, seedBytes, seedMaterial } from "./seed-value.ts";
+import { base64Url, isPublicKey, seedBytes, seedMaterial } from "./seed-value.ts";
 import { signs, type Sign } from "./sign.ts";
 import type { IdenticonInput } from "./types.ts";
 
@@ -66,17 +66,14 @@ function crc16(bytes: Uint8Array): number {
 }
 
 export function seedByteLength(seed: string): number {
-  return seedBytes({ seed, seedKind: "text" }).length;
+  return seedBytes({ seed }).length;
 }
 
 export function seedPaletteIndex(value: string | IdenticonInput): number {
-  if (typeof value === "string") {
-    seedByteLength(value);
-    return paletteDraw(value, paletteNonce(value), paletteCount);
-  }
-
-  const material = seedMaterial(value);
-  return paletteDraw(material, paletteNonce(material, value), paletteCount);
+  const seed = typeof value === "string" ? { seed: value } : value;
+  const material = seedMaterial(seed);
+  seedBytes(seed);
+  return paletteDraw(material, paletteNonce(material), paletteCount);
 }
 
 export function canonicalPaletteSeed(index: number): string {
@@ -112,7 +109,7 @@ export function seedPayload(value: IdenticonInput): Uint8Array {
   const result = new Uint8Array(seedDataByteCount);
 
   result[0] = payloadMagic;
-  result[1] = value.seedKind === "ed25519" ? keyPayloadVersion : textPayloadVersion;
+  result[1] = isPublicKey(value.seed) ? keyPayloadVersion : textPayloadVersion;
   result[2] = bytes.length;
   result.set(bytes, payloadSeedOffset);
   result.set(packedSigns(value), payloadSignsOffset);
@@ -206,11 +203,9 @@ function decodedPayload(data: Uint8Array): IdenticonInput {
 
   const bytes = data.slice(payloadSeedOffset, payloadSeedOffset + length);
   let seed: string;
-  let seedKind: IdenticonInput["seedKind"];
 
   if (version === keyPayloadVersion) {
     seed = base64Url(bytes);
-    seedKind = "ed25519";
   } else {
     try {
       seed = decoder.decode(bytes);
@@ -220,7 +215,6 @@ function decodedPayload(data: Uint8Array): IdenticonInput {
     if (encoder.encode(seed).length !== length || seed.trim() !== seed || seed.length === 0) {
       throw new Error("visual payload seed text is invalid");
     }
-    seedKind = "text";
   }
 
   const first = data[payloadSignsOffset]!;
@@ -229,7 +223,6 @@ function decodedPayload(data: Uint8Array): IdenticonInput {
 
   return {
     seed,
-    seedKind,
     solar: unpackSign(first >>> 4),
     lunar: unpackSign(first & 0x0f),
     ascendant: unpackSign(second >>> 4),
