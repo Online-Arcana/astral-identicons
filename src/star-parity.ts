@@ -1,8 +1,9 @@
 import { rsEncode, rsRecoverErasures, rsValid } from "./rs.ts";
 import {
-  seedCodeword,
+  decodeSeedCodeword,
   seedDataByteCount,
   seedParityByteCount,
+  seedPayload,
   seedSlotCount
 } from "./seed.ts";
 import type { IdenticonInput } from "./types.ts";
@@ -21,14 +22,16 @@ export interface StarVisualSymbol {
   readonly opacity: number;
 }
 
-export interface RecoveredParity {
+export interface RecoveredStarRecord {
+  readonly value: IdenticonInput;
   readonly bytes: Uint8Array;
   readonly observedStars: number;
+  readonly reconstructedStars: number;
   readonly discardedStars: number;
   readonly confidence: number;
 }
 
-export const starParityDataByteCount = seedParityByteCount;
+export const starParityDataByteCount = seedDataByteCount;
 export const starParityCodewordByteCount = seedSlotCount;
 export const starParityExpansionByteCount =
   starParityCodewordByteCount - starParityDataByteCount;
@@ -36,20 +39,16 @@ export const starSizes = [9, 13, 17, 21] as const;
 export const starOpacities = [0.52, 0.68, 0.84, 1] as const;
 
 if (starParityExpansionByteCount <= 0) {
-  throw new Error("star parity expansion must add redundant bytes");
-}
-
-export function payloadParity(value: IdenticonInput): Uint8Array {
-  return seedCodeword(value).slice(seedDataByteCount);
+  throw new Error("star recovery code must add redundant bytes");
 }
 
 export function starParityCodeword(value: IdenticonInput): Uint8Array {
-  return rsEncode(payloadParity(value), starParityExpansionByteCount);
+  return rsEncode(seedPayload(value), starParityExpansionByteCount);
 }
 
 export function starVisualSymbol(byte: number): StarVisualSymbol {
   if (!Number.isInteger(byte) || byte < 0 || byte > 255) {
-    throw new Error("star parity symbol must be one byte");
+    throw new Error("star recovery symbol must be one byte");
   }
 
   const position = byte >>> 4;
@@ -67,9 +66,7 @@ export function starVisualSymbol(byte: number): StarVisualSymbol {
   };
 }
 
-function validateObservations(
-  observations: readonly ByteObservation[]
-): void {
+function validateObservations(observations: readonly ByteObservation[]): void {
   if (observations.length !== starParityCodewordByteCount) {
     throw new Error(
       `star observations must contain ${starParityCodewordByteCount} slots`
@@ -88,7 +85,7 @@ function validateObservations(
   }
 }
 
-function confidence(
+function retainedConfidence(
   observations: readonly ByteObservation[],
   erased: ReadonlySet<number>
 ): number {
@@ -105,9 +102,14 @@ function confidence(
   return count === 0 ? 0 : total / count;
 }
 
+function decodePayload(payload: Uint8Array): IdenticonInput {
+  const canonicalCodeword = rsEncode(payload, seedParityByteCount);
+  return decodeSeedCodeword(canonicalCodeword);
+}
+
 export function recoverStarParity(
   observations: readonly ByteObservation[]
-): RecoveredParity {
+): RecoveredStarRecord {
   validateObservations(observations);
 
   const damaged = new Uint8Array(starParityCodewordByteCount);
@@ -134,6 +136,7 @@ export function recoverStarParity(
   }
 
   candidates.sort((left, right) => left.confidence - right.confidence);
+  const originalErasures = erased.size;
   let candidateIndex = 0;
   let lastError: unknown;
 
@@ -148,14 +151,20 @@ export function recoverStarParity(
           );
 
       if (!rsValid(recovered, starParityExpansionByteCount)) {
-        throw new Error("expanded star parity codeword is invalid");
+        throw new Error("expanded star recovery codeword is invalid");
       }
 
+      const bytes = recovered.slice(0, starParityDataByteCount);
+      const value = decodePayload(bytes);
+      const discardedStars = erased.size - originalErasures;
+
       return {
-        bytes: recovered.slice(0, starParityDataByteCount),
+        value,
+        bytes,
         observedStars,
-        discardedStars: erased.size - (observations.length - observedStars),
-        confidence: confidence(observations, erased)
+        reconstructedStars: erased.size,
+        discardedStars,
+        confidence: retainedConfidence(observations, erased)
       };
     } catch (error) {
       lastError = error;
@@ -172,6 +181,6 @@ export function recoverStarParity(
 
   const message = lastError instanceof Error
     ? lastError.message
-    : "star parity recovery failed";
+    : "star recovery failed";
   throw new Error(`${message}; the readable stars conflict too strongly`);
 }
