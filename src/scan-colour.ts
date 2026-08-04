@@ -25,6 +25,8 @@ interface Cluster {
   values: Rgb[];
 }
 
+const liveCaptureConfidenceCeiling = 0.39;
+
 function clamp(value: number, minimum: number, maximum: number): number {
   return Math.max(minimum, Math.min(maximum, value));
 }
@@ -330,13 +332,17 @@ export function observePalette(image: ImageData): ObservedPalette {
   const layer0 = swapped ? firstLayer1 : firstLayer0;
   const layer1 = swapped ? firstLayer0 : firstLayer1;
   const gap = Math.max(0, best.secondCost - best.cost);
+  const confidence = clamp(gap / Math.max(0.01, best.secondCost), 0, 1);
 
   return {
     background,
     layer0,
     layer1,
     index: best.index,
-    confidence: clamp(gap / Math.max(0.01, best.secondCost), 0, 1)
+    // The live frame palette is only an orientation hint. The exact palette is
+    // checked after Reed-Solomon reconstruction against the frozen evidence.
+    // Keeping this soft prevents a shaky final frame from vetoing capture.
+    confidence: Math.min(liveCaptureConfidenceCeiling, confidence)
   };
 }
 

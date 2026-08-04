@@ -41,4 +41,27 @@ describe("Reed-Solomon camera recovery", () => {
     expect(recovered.discardedStars).toBe(wrong);
     expect(recovered.reconstructedStars).toBe(wrong + missing);
   });
+
+  test("drops weak wrong guesses when the raw error limit is exceeded", () => {
+    const codeword = starParityCodeword(sample);
+    const observations: ByteObservation[] = Array.from(
+      { length: codeword.length },
+      (_unused, index) => {
+        if (index >= 55) return { value: null, confidence: 0 };
+        if (index < 8) {
+          return {
+            value: codeword[index]! ^ 0x6d,
+            confidence: 0.21 + index * 0.01
+          };
+        }
+        return { value: codeword[index]!, confidence: 0.96 };
+      }
+    );
+
+    const recovered = recoverStarParity(observations);
+
+    expect(recovered.observedStars).toBe(55);
+    expect(recovered.value).toEqual(sample);
+    expect(recovered.discardedStars >= 8).toBe(true);
+  });
 });

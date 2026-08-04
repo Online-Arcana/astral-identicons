@@ -21,23 +21,27 @@ export interface VisualCaptureSnapshot {
   readonly ready: boolean;
 }
 
-interface VoteResult extends ByteObservation {
-  readonly total: number;
+interface SlotEvidence {
+  readonly peaks: Float32Array;
+  readonly support: Uint8Array;
 }
 
-function vote(): Float32Array {
-  return new Float32Array(256);
+function slotEvidence(): SlotEvidence {
+  return {
+    peaks: new Float32Array(256),
+    support: new Uint8Array(256)
+  };
 }
 
-function observation(votes: Float32Array): VoteResult {
+function observation(evidence: SlotEvidence): ByteObservation {
   let bestValue = 0;
   let best = 0;
   let second = 0;
-  let total = 0;
 
-  for (let value = 0; value < votes.length; value += 1) {
-    const score = votes[value] ?? 0;
-    total += score;
+  for (let value = 0; value < evidence.peaks.length; value += 1) {
+    const peak = evidence.peaks[value] ?? 0;
+    const confirmation = Math.min(0.18, (evidence.support[value] ?? 0) * 0.03);
+    const score = peak + confirmation;
 
     if (score > best) {
       second = best;
@@ -49,41 +53,43 @@ function observation(votes: Float32Array): VoteResult {
     if (score > second) second = score;
   }
 
-  const share = total === 0 ? 0 : best / total;
-  const margin = best - second;
-  const confidence = best === 0 ? 0 : Math.max(0, Math.min(1, margin / best));
+  if (best < 0.24) return { value: null, confidence: 0 };
 
-  if (best < 0.24 || share < 0.52 || margin < 0.07) {
-    return { value: null, confidence, total };
-  }
-
-  return { value: bestValue, confidence, total };
+  return {
+    value: bestValue,
+    confidence: Math.max(0, Math.min(1, (best - second) / Math.max(0.01, best)))
+  };
 }
 
 export class VisualCaptureSeries {
-  readonly #starVotes = Array.from({ length: seedSlotCount }, vote);
+  readonly #stars = Array.from({ length: seedSlotCount }, slotEvidence);
   #centre: boolean[] = [];
   #ring: boolean[] = [];
   #frames = 0;
   #usefulMilliseconds = 0;
   #lastUsefulAt: number | undefined;
+  #reading: VisualCodeReading | undefined;
 
   clear(): void {
-    for (const votes of this.#starVotes) votes.fill(0);
+    for (const evidence of this.#stars) {
+      evidence.peaks.fill(0);
+      evidence.support.fill(0);
+    }
     this.#centre = [];
     this.#ring = [];
     this.#frames = 0;
     this.#usefulMilliseconds = 0;
     this.#lastUsefulAt = undefined;
+    this.#reading = undefined;
   }
 
   add(value: VisualCaptureEvidence): VisualCaptureSnapshot {
-    if (value.stars.length !== this.#starVotes.length) {
-      throw new Error(`capture requires ${this.#starVotes.length} star bytes`);
+    if (value.stars.length !== this.#stars.length) {
+      throw new Error(`capture requires ${this.#stars.length} star bytes`);
     }
 
     const weight = 0.35 + Math.max(0, Math.min(1, value.quality)) * 0.65;
-    this.addVotes(this.#starVotes, value.stars, weight);
+    this.addEvidence(value.stars, weight);
     this.mergeRegions(value.centre, value.ring);
 
     if (this.#lastUsefulAt === undefined) {
@@ -101,15 +107,14 @@ export class VisualCaptureSeries {
   }
 
   snapshot(): VisualCaptureSnapshot {
-    const stars = this.#starVotes.map(observation);
+    const stars = this.#stars.map(observation);
     const observedStars = stars.filter((value) => value.value !== null).length;
-    let reading: VisualCodeReading | undefined;
 
-    if (observedStars >= seedDataByteCount) {
+    if (!this.#reading && observedStars >= seedDataByteCount) {
       try {
-        reading = recoverVisualCode(stars);
+        this.#reading = recoverVisualCode(stars);
       } catch {
-        reading = undefined;
+        this.#reading = undefined;
       }
     }
 
@@ -120,25 +125,30 @@ export class VisualCaptureSeries {
       requiredStars: seedDataByteCount,
       centreFound: this.#centre.filter(Boolean).length,
       ringFound: this.#ring.filter(Boolean).length,
-      reading,
-      ready: Boolean(reading) && (
-        this.#frames >= 2 ||
-        (reading?.confidence ?? 0) >= 0.86
-      )
+      reading: this.#reading,
+      ready: Boolean(this.#reading)
     };
   }
 
-  private addVotes(
-    targets: readonly Float32Array[],
+  private addEvidence(
     observations: readonly ByteObservation[],
     weight: number
   ): void {
     for (let index = 0; index < observations.length; index += 1) {
-      const value = observations[index]!;
-      if (value.value === null) continue;
+      const observation = observations[index]!;
+      if (observation.value === null) continue;
 
-      const confidence = 0.08 + value.confidence * 0.92;
-      targets[index]![value.value] += weight * confidence;
+      const evidence = this.#stars[index]!;
+      const value = observation.value;
+      const confidence = 0.08 + observation.confidence * 0.92;
+      const score = weight * confidence;
+      const current = evidence.peaks[value] ?? 0;
+      const support = evidence.support[value] ?? 0;
+
+      evidence.peaks[value] = Math.max(current, score);
+      if (score >= 0.2 && support < 6) {
+        evidence.support[value] = support + 1;
+      }
     }
   }
 
