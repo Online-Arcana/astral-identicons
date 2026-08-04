@@ -5,6 +5,10 @@ import {
   satelliteDotRadii,
   satellitePoint
 } from "./layout-v9.ts";
+import {
+  fillTracedGlyph,
+  tracedPlanetGlyph
+} from "./planet-vector.ts";
 import type { V9CalibrationObservation } from "./scan-v9-calibration.ts";
 import {
   foregroundEvidence,
@@ -22,7 +26,8 @@ import {
   planetaryGlyphs,
   planetRotationLevelCount,
   planetSizeLevelCount,
-  satellitePositionCount
+  satellitePositionCount,
+  type PlanetaryKey
 } from "./planet.ts";
 
 interface Point {
@@ -74,13 +79,11 @@ const cropSize = 72;
 const templateDimension = 36;
 const nominalSizeLevel = 3;
 const nominalFadingLevel = 5;
-const retainedAnchors = 64;
-const retainedCoarseStates = 14;
-const retainedSizedStates = 8;
-const retainedFadedStates = 8;
+const retainedAnchors = 72;
+const retainedCoarseStates = 16;
+const retainedSizedStates = 10;
+const retainedFadedStates = 10;
 const retainedAlternatives = 8;
-const symbolFont =
-  "Noto Sans Symbols 2, Segoe UI Symbol, Apple Symbols, Arial Unicode MS, sans-serif";
 const templateCache = new Map<string, Float32Array>();
 
 function clamp(value: number, minimum: number, maximum: number): number {
@@ -96,7 +99,6 @@ function calibrationValues(
       fading: planetFadingOpacities
     };
   }
-
   return {
     sizes: calibration.planetSizeCentres,
     fading: calibration.fadingCentres
@@ -110,7 +112,7 @@ function canvasContext(canvas: HTMLCanvasElement): CanvasRenderingContext2D {
 }
 
 function templateMask(
-  glyph: string,
+  key: PlanetaryKey,
   rotation: number,
   sizeLevel: number,
   fadingLevel: number,
@@ -118,15 +120,15 @@ function templateMask(
 ): Float32Array {
   const sizeValue = values.sizes[sizeLevel] ?? planetGlyphSizes[sizeLevel]!;
   const fadingValue = values.fading[fadingLevel] ?? planetFadingOpacities[fadingLevel]!;
-  const key = [
-    glyph,
+  const cacheKey = [
+    key,
     rotation,
     sizeLevel,
     fadingLevel,
     sizeValue.toFixed(3),
     fadingValue.toFixed(4)
   ].join(":");
-  const cached = templateCache.get(key);
+  const cached = templateCache.get(cacheKey);
   if (cached) return cached;
 
   const canvas = document.createElement("canvas");
@@ -134,17 +136,13 @@ function templateMask(
   canvas.height = templateDimension;
   const context = canvasContext(canvas);
   const scale = templateDimension / cropSize;
-  const size = sizeValue * scale;
 
   context.clearRect(0, 0, canvas.width, canvas.height);
   context.translate(canvas.width / 2, canvas.height / 2);
   context.rotate(rotation * 30 * Math.PI / 180);
   context.globalAlpha = fadingValue;
-  context.textAlign = "center";
-  context.textBaseline = "middle";
-  context.font = `500 ${size}px ${symbolFont}`;
   context.fillStyle = "#fff";
-  context.fillText(glyph, 0, 0);
+  fillTracedGlyph(context, tracedPlanetGlyph(key), sizeValue * scale);
 
   const pixels = context.getImageData(
     0,
@@ -153,12 +151,11 @@ function templateMask(
     canvas.height
   ).data;
   const result = new Float32Array(templateDimension * templateDimension);
-
   for (let index = 0; index < result.length; index += 1) {
     result[index] = pixels[index * 4 + 3]! / 255;
   }
 
-  templateCache.set(key, result);
+  templateCache.set(cacheKey, result);
   return result;
 }
 
@@ -201,7 +198,6 @@ function correlation(
   for (let row = 0; row < templateDimension; row += 1) {
     const expectedRow = row - shiftY;
     if (expectedRow < 0 || expectedRow >= templateDimension) continue;
-
     for (let column = 0; column < templateDimension; column += 1) {
       const expectedColumn = column - shiftX;
       if (expectedColumn < 0 || expectedColumn >= templateDimension) continue;
@@ -214,8 +210,7 @@ function correlation(
   }
 
   const energy = observedLength + expectedLength;
-  if (energy === 0) return 0;
-  return clamp(2 * dot / energy, 0, 1);
+  return energy === 0 ? 0 : clamp(2 * dot / energy, 0, 1);
 }
 
 function bestCorrelation(
@@ -223,7 +218,6 @@ function bestCorrelation(
   expected: Float32Array
 ): number {
   let best = 0;
-
   for (let shiftY = -1; shiftY <= 1; shiftY += 1) {
     for (let shiftX = -1; shiftX <= 1; shiftX += 1) {
       best = Math.max(best, correlation(observed, expected, shiftX, shiftY));
@@ -264,16 +258,15 @@ function anchorSamples(
 }
 
 function coarseCandidates(
-  glyph: string,
+  key: PlanetaryKey,
   anchors: readonly AnchorSample[],
   values: VisualCalibration
 ): readonly CoarseCandidate[] {
   const result: CoarseCandidate[] = [];
-
   for (const anchor of anchors) {
     for (let rotation = 0; rotation < planetRotationLevelCount; rotation += 1) {
       const expected = templateMask(
-        glyph,
+        key,
         rotation,
         nominalSizeLevel,
         nominalFadingLevel,
@@ -288,23 +281,21 @@ function coarseCandidates(
       });
     }
   }
-
   return result
     .sort((left, right) => right.score - left.score)
     .slice(0, retainedCoarseStates);
 }
 
 function sizedCandidates(
-  glyph: string,
+  key: PlanetaryKey,
   coarse: readonly CoarseCandidate[],
   values: VisualCalibration
 ): readonly SizedCandidate[] {
   const result: SizedCandidate[] = [];
-
   for (const candidate of coarse) {
     for (let size = 0; size < planetSizeLevelCount; size += 1) {
       const expected = templateMask(
-        glyph,
+        key,
         candidate.rotation,
         size,
         nominalFadingLevel,
@@ -319,23 +310,21 @@ function sizedCandidates(
       });
     }
   }
-
   return result
     .sort((left, right) => right.score - left.score)
     .slice(0, retainedSizedStates);
 }
 
 function fadedCandidates(
-  glyph: string,
+  key: PlanetaryKey,
   sized: readonly SizedCandidate[],
   values: VisualCalibration
 ): readonly FadedCandidate[] {
   const result: FadedCandidate[] = [];
-
   for (const candidate of sized) {
     for (let fading = 0; fading < values.fading.length; fading += 1) {
       const expected = templateMask(
-        glyph,
+        key,
         candidate.rotation,
         candidate.size,
         fading,
@@ -350,7 +339,6 @@ function fadedCandidates(
       });
     }
   }
-
   return result
     .sort((left, right) => right.score - left.score)
     .slice(0, retainedFadedStates);
@@ -372,8 +360,8 @@ function satelliteProfile(
 
   for (let offsetY = -radius; offsetY <= radius; offsetY += 1) {
     for (let offsetX = -radius; offsetX <= radius; offsetX += 1) {
-      const distance = Math.hypot(offsetX, offsetY);
-      if (distance > radius) continue;
+      const radialDistance = Math.hypot(offsetX, offsetY);
+      if (radialDistance > radius) continue;
       const evidence = foregroundEvidence(
         image,
         reference,
@@ -383,7 +371,7 @@ function satelliteProfile(
       peak = Math.max(peak, evidence);
       if (evidence < 0.1) continue;
       mass += evidence;
-      weightedRadius += distance * evidence;
+      weightedRadius += radialDistance * evidence;
       weight += evidence;
     }
   }
@@ -391,7 +379,6 @@ function satelliteProfile(
   if (weight === 0 || peak < 0.12) {
     return { presence: 0, diameter: 0, confidence: 0 };
   }
-
   const meanRadius = weightedRadius / weight;
   const diameter = meanRadius * 2.8 / scale;
   const presence = clamp(
@@ -399,8 +386,11 @@ function satelliteProfile(
     0,
     1
   );
-  const confidence = clamp(peak * 0.5 + presence * 0.5, 0, 1);
-  return { presence, diameter, confidence };
+  return {
+    presence,
+    diameter,
+    confidence: clamp(peak * 0.5 + presence * 0.5, 0, 1)
+  };
 }
 
 function satelliteProfiles(
@@ -428,11 +418,9 @@ function satelliteCandidates(
   profiles: readonly SatelliteProfile[]
 ): readonly SatelliteCandidate[] {
   const result: SatelliteCandidate[] = [];
-
   for (let small = 0; small < satellitePositionCount; small += 1) {
     for (let medium = 0; medium < satellitePositionCount; medium += 1) {
       if (medium === small) continue;
-
       for (let large = 0; large < satellitePositionCount; large += 1) {
         if (large === small || large === medium) continue;
         const selected = new Set([small, medium, large]);
@@ -451,7 +439,6 @@ function satelliteCandidates(
           profiles[medium]!.confidence,
           profiles[large]!.confidence
         );
-
         result.push({
           satellites: { small, medium, large },
           score: selectedScore * 0.72 +
@@ -461,7 +448,6 @@ function satelliteCandidates(
       }
     }
   }
-
   return result
     .sort((left, right) => right.score - left.score)
     .slice(0, 4);
@@ -470,13 +456,13 @@ function satelliteCandidates(
 function alternatives(
   image: ImageData,
   reference: GreyReference,
-  glyph: string,
+  key: PlanetaryKey,
   anchors: readonly AnchorSample[],
   values: VisualCalibration
 ): readonly PlanetaryAlternative[] {
-  const coarse = coarseCandidates(glyph, anchors, values);
-  const sized = sizedCandidates(glyph, coarse, values);
-  const faded = fadedCandidates(glyph, sized, values);
+  const coarse = coarseCandidates(key, anchors, values);
+  const sized = sizedCandidates(key, coarse, values);
+  const faded = fadedCandidates(key, sized, values);
   const candidates: Array<{
     readonly value: PlanetaryAlternative;
     readonly score: number;
@@ -490,7 +476,6 @@ function alternatives(
       point,
       values.sizes[candidate.size] ?? planetGlyphSizes[candidate.size]!
     );
-
     for (const satellite of satelliteCandidates(profiles)) {
       const score = candidate.score * 0.78 + satellite.score * 0.22;
       candidates.push({
@@ -510,10 +495,9 @@ function alternatives(
   candidates.sort((left, right) => right.score - left.score);
   const best = candidates[0]?.score ?? 0;
   const unique = new Map<string, PlanetaryAlternative>();
-
   for (const candidate of candidates) {
     const value = candidate.value;
-    const key = [
+    const identity = [
       value.anchor,
       value.rotation,
       value.size,
@@ -522,9 +506,8 @@ function alternatives(
       value.satellites.medium,
       value.satellites.large
     ].join(":");
-    if (unique.has(key)) continue;
-
-    unique.set(key, {
+    if (unique.has(identity)) continue;
+    unique.set(identity, {
       ...value,
       confidence: best === 0
         ? 0.001
@@ -532,7 +515,6 @@ function alternatives(
     });
     if (unique.size >= retainedAlternatives) break;
   }
-
   return [...unique.values()];
 }
 
@@ -547,13 +529,12 @@ export function observeV9Planets(
   const reference = greyReference(image);
   const values = calibrationValues(calibration);
   const anchors = anchorSamples(image, reference, values);
-
   return planetaryGlyphs.map((definition) => ({
     key: definition.key,
     alternatives: alternatives(
       image,
       reference,
-      definition.glyph,
+      definition.key,
       anchors,
       values
     )
