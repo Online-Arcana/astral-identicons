@@ -120,7 +120,7 @@ function starProfile(
   const ranked = values
     .map((value) => value.evidence)
     .sort((left, right) => right - left);
-  const opacitySamples = ranked.slice(0, Math.max(5, Math.round(ranked.length * 0.12)));
+  const opacitySamples = ranked.slice(0, Math.max(5, Math.round(ranked.length * 0.02)));
   const opacity = opacitySamples.reduce((sum, value) => sum + value, 0) /
     Math.max(1, opacitySamples.length);
   const visible = values.filter((value) => value.evidence >= Math.max(0.2, opacity * 0.38));
