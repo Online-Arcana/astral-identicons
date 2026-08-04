@@ -5,8 +5,10 @@ import { page } from "../src/page.ts";
 const root = `${import.meta.dir}/..`;
 const outputRoot = `${root}/dist`;
 const vendorRoot = `${outputRoot}/vendor`;
-const openCvVersion = "4.12.0";
-const openCvSource = `https://docs.opencv.org/${openCvVersion}/opencv.js`;
+const openCvSources = [
+  "https://docs.opencv.org/4.x/opencv.js",
+  "https://docs.opencv.org/4.10.0/opencv.js"
+] as const;
 
 await rm(outputRoot, { recursive: true, force: true });
 await mkdir(vendorRoot, { recursive: true });
@@ -39,26 +41,46 @@ const bundleName = `app.${bundleHash}.js`;
 
 await Bun.write(`${outputRoot}/${bundleName}`, browserBundle);
 
-const openCvResponse = await fetch(openCvSource);
-if (!openCvResponse.ok) {
+async function downloadOpenCv(): Promise<{
+  bytes: Uint8Array;
+  source: string;
+}> {
+  const failures: string[] = [];
+
+  for (const source of openCvSources) {
+    try {
+      const response = await fetch(source);
+
+      if (!response.ok) {
+        failures.push(`${source}: ${response.status} ${response.statusText}`);
+        continue;
+      }
+
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      if (bytes.byteLength < 1_000_000) {
+        failures.push(`${source}: unexpectedly small (${bytes.byteLength} bytes)`);
+        continue;
+      }
+
+      return { bytes, source };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      failures.push(`${source}: ${message}`);
+    }
+  }
+
   throw new Error(
-    `Could not download OpenCV.js ${openCvVersion}: ${openCvResponse.status} ${openCvResponse.statusText}`
+    `Could not download a valid OpenCV.js runtime:\n${failures.join("\n")}`
   );
 }
 
-const openCvBytes = new Uint8Array(await openCvResponse.arrayBuffer());
-if (openCvBytes.byteLength < 1_000_000) {
-  throw new Error(
-    `Downloaded OpenCV.js is unexpectedly small (${openCvBytes.byteLength} bytes)`
-  );
-}
-
+const openCv = await downloadOpenCv();
 const openCvHash = createHash("sha256")
-  .update(openCvBytes)
+  .update(openCv.bytes)
   .digest("hex")
   .slice(0, 12);
 const openCvName = `opencv.${openCvHash}.js`;
-await Bun.write(`${vendorRoot}/${openCvName}`, openCvBytes);
+await Bun.write(`${vendorRoot}/${openCvName}`, openCv.bytes);
 
 const sourceIndex = await Bun.file(`${root}/public/index.html`).text();
 const index = page(sourceIndex, {
@@ -73,5 +95,5 @@ await cp(`${root}/assets`, `${outputRoot}/assets`, { recursive: true });
 await Bun.write(`${outputRoot}/.nojekyll`, "");
 
 console.log(
-  `GitHub Pages site built at ${outputRoot} with OpenCV.js ${openCvVersion}`
+  `GitHub Pages site built at ${outputRoot} with OpenCV.js from ${openCv.source}`
 );
