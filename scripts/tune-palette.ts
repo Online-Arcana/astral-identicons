@@ -1,6 +1,7 @@
 import { paletteForIndex } from "../src/palette.ts";
 import { paletteDraw } from "../src/prng.ts";
 import { paletteCount } from "../src/seed.ts";
+import { hexBytes, sha256 } from "../src/sha256.ts";
 
 interface TargetColours {
   background: string;
@@ -116,6 +117,12 @@ function nearest(target: TargetColours): { index: number; distance: number } {
   return { index, distance };
 }
 
+function candidateNonce(seed: string, attempt: number): string {
+  return hexBytes(sha256(
+    `astral-identicon/palette-tune/v1\u0000${seed}\u0000${attempt}`
+  ));
+}
+
 function nonceFor(seed: string, index: number, current?: string): string {
   if (
     current &&
@@ -126,7 +133,7 @@ function nonceFor(seed: string, index: number, current?: string): string {
   }
 
   for (let attempt = 0; attempt < maximumAttempts; attempt += 1) {
-    const nonce = attempt.toString(16).padStart(64, "0");
+    const nonce = candidateNonce(seed, attempt);
     if (paletteDraw(seed, nonce, paletteCount) === index) return nonce;
   }
 
