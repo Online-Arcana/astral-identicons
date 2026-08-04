@@ -10,20 +10,26 @@ import {
   encodedFieldGap,
   maximumCalibrationStarRadius,
   maximumParityEnvelope,
-  maximumPlanetEnvelope,
+  minimumParityGroupSeparation,
+  minimumPlanetAnchorSeparation,
+  minimumPlanetEnvelopeGap,
   parityDensityStrokeWidths,
   parityFadingOpacities,
-  parityGroupRadii,
+  parityGroupPoints,
   parityStarSizes,
-  planetAnchorOuterRadius,
   planetAnchorPoints,
   planetDensityStrokeWidths,
   planetFadingOpacities,
   planetGlyphSizes,
+  planetGroupCentres,
   v9InnerClipRadius
 } from "../src/layout-v9.ts";
-import { canvas, outerRingRadius, ringStroke } from "../src/layout.ts";
-import { planetAnchorCount } from "../src/planet.ts";
+import { canvas, centre, outerRingRadius, ringStroke } from "../src/layout.ts";
+import {
+  planetAnchorCount,
+  planetAnchorGroupCount
+} from "../src/planet.ts";
+import { v9ParityStarCount } from "../src/parity-v9.ts";
 
 describe("v9 visual hierarchy", () => {
   test("keeps planetary glyphs exactly twice star size", () => {
@@ -36,7 +42,6 @@ describe("v9 visual hierarchy", () => {
         Number(parityStarSizes[level]) * 2
       );
     }
-
     expect(centralSun.glyphSize).toBe(46);
   });
 
@@ -54,15 +59,15 @@ describe("v9 visual hierarchy", () => {
     expect(v9StarCalibrationLevels[6]).toBe(6);
   });
 
-  test("keeps payload fields separate and calibration stars outside the ring", () => {
+  test("keeps payload stars inside and only calibration stars outside", () => {
     expect(encodedFieldGap).toBeGreaterThan(0);
-    expect(
-      parityGroupRadii.at(-1)! + maximumParityEnvelope
-    ).toBeLessThanOrEqual(v9InnerClipRadius);
-    expect(
-      planetAnchorOuterRadius + maximumPlanetEnvelope
-    ).toBeLessThan(
-      parityGroupRadii[0]! - maximumParityEnvelope
+    expect(parityGroupPoints.length).toBe(v9ParityStarCount);
+    for (const point of parityGroupPoints) {
+      const radius = Math.hypot(point.x - centre, point.y - centre);
+      expect(radius + maximumParityEnvelope).toBeLessThanOrEqual(v9InnerClipRadius);
+    }
+    expect(minimumParityGroupSeparation).toBeGreaterThan(
+      maximumParityEnvelope * 2 + 2
     );
     expect(calibrationStarRadius).toBeGreaterThan(
       outerRingRadius + ringStroke / 2
@@ -72,8 +77,22 @@ describe("v9 visual hierarchy", () => {
     ).toBeLessThanOrEqual(canvas / 2);
   });
 
-  test("provides exactly 256 balanced legal anchors", () => {
+  test("scatters parity groups rather than arranging them in circular tracks", () => {
+    const radii = parityGroupPoints.map((point) => {
+      return Math.hypot(point.x - centre, point.y - centre).toFixed(1);
+    });
+    expect(new Set(radii).size).toBeGreaterThan(100);
+  });
+
+  test("keeps all eleven possible planets visibly separated", () => {
+    expect(planetGroupCentres.length).toBe(planetAnchorGroupCount);
+    expect(minimumPlanetAnchorSeparation).toBeGreaterThan(69);
+    expect(minimumPlanetEnvelopeGap).toBeGreaterThanOrEqual(18);
+  });
+
+  test("preserves exactly 256 legal anchor identities", () => {
     expect(planetAnchorPoints.length).toBe(planetAnchorCount);
+    expect(planetAnchorCount).toBe(256);
     expect(new Set(planetAnchorPoints.map((point) => {
       return `${point.x.toFixed(6)}:${point.y.toFixed(6)}`;
     })).size).toBe(planetAnchorCount);
