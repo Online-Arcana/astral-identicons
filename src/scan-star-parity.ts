@@ -1,5 +1,7 @@
 import {
+  codeSlotPoint,
   codeSymbolPoint,
+  codeSymbolSpacing,
   northStar,
   northStarPoint
 } from "./code-layout.ts";
@@ -44,66 +46,62 @@ function clamp(value: number, minimum: number, maximum: number): number {
   return Math.max(minimum, Math.min(maximum, value));
 }
 
-function strongestEvidence(
-  image: ImageData,
-  x: number,
-  y: number,
-  radius: number,
-  palette: ObservedPalette
-): number {
-  const values: number[] = [];
-
-  for (let offsetY = -radius; offsetY <= radius; offsetY += 1) {
-    for (let offsetX = -radius; offsetX <= radius; offsetX += 1) {
-      if (offsetX * offsetX + offsetY * offsetY > radius * radius) continue;
-
-      values.push(colourEvidence(
-        pixel(image, x + offsetX, y + offsetY),
-        palette.background,
-        palette.layer1
-      ));
-    }
-  }
-
-  values.sort((left, right) => right - left);
-  const selected = values.slice(0, Math.max(4, Math.round(values.length * 0.18)));
-  return selected.reduce((sum, value) => sum + value, 0) /
-    Math.max(1, selected.length);
-}
-
 function positionObservation(
   image: ImageData,
   palette: ObservedPalette,
   slot: number
 ): PositionObservation {
   const scale = image.width / 1024;
-  let best: RankedValue = { value: 0, score: Number.NEGATIVE_INFINITY };
-  let second: RankedValue = { value: 0, score: Number.NEGATIVE_INFINITY };
+  const base = codeSlotPoint(slot);
+  const centreX = base.x * scale;
+  const centreY = base.y * scale;
+  const radius = Math.max(5, Math.round(18 * scale));
+  let total = 0;
+  let weightedX = 0;
+  let weightedY = 0;
+  let peak = 0;
 
-  for (let value = 0; value < 16; value += 1) {
-    const point = codeSymbolPoint(slot, value);
-    const score = strongestEvidence(
-      image,
-      point.x * scale,
-      point.y * scale,
-      Math.max(4, Math.round(11 * scale)),
-      palette
-    );
-    const candidate = { value, score };
+  for (let offsetY = -radius; offsetY <= radius; offsetY += 1) {
+    for (let offsetX = -radius; offsetX <= radius; offsetX += 1) {
+      const evidence = colourEvidence(
+        pixel(image, centreX + offsetX, centreY + offsetY),
+        palette.background,
+        palette.layer1
+      );
+      peak = Math.max(peak, evidence);
+      const weight = Math.max(0, evidence - 0.14);
+      if (weight === 0) continue;
 
-    if (candidate.score > best.score) {
-      second = best;
-      best = candidate;
-      continue;
+      total += weight;
+      weightedX += (centreX + offsetX) * weight;
+      weightedY += (centreY + offsetY) * weight;
     }
-
-    if (candidate.score > second.score) second = candidate;
   }
 
-  const margin = best.score - second.score;
-  const confidence = clamp(margin / Math.max(0.025, best.score), 0, 1);
+  if (total < 0.35 || peak < 0.18) {
+    return { value: null, confidence: 0 };
+  }
 
-  if (best.score < 0.1 || margin < 0.018) {
+  const observedX = weightedX / total / scale;
+  const observedY = weightedY / total / scale;
+  const ranked = Array.from({ length: 16 }, (_unused, value) => {
+    const point = codeSymbolPoint(slot, value);
+    return {
+      value,
+      score: Math.hypot(observedX - point.x, observedY - point.y)
+    };
+  }).sort((left, right) => left.score - right.score);
+  const best = ranked[0]!;
+  const second = ranked[1]!;
+  const distanceConfidence = clamp(
+    (second.score - best.score) / codeSymbolSpacing,
+    0,
+    1
+  );
+  const evidenceConfidence = clamp(total / 2, 0, 1);
+  const confidence = distanceConfidence * evidenceConfidence;
+
+  if (best.score > 7) {
     return { value: null, confidence };
   }
 
@@ -124,39 +122,100 @@ function starProfile(
   const centreX = point.x * scale;
   const centreY = point.y * scale;
   const radius = Math.max(7, Math.round(18 * scale));
-  const values: Array<{ evidence: number; distance: number }> = [];
+  const side = radius * 2 + 1;
+  const evidence = new Float32Array(side * side);
 
-  for (let offsetY = -radius; offsetY <= radius; offsetY += 1) {
-    for (let offsetX = -radius; offsetX <= radius; offsetX += 1) {
-      const distance = Math.hypot(offsetX, offsetY);
-      if (distance > radius) continue;
+  for (let row = 0; row < side; row += 1) {
+    for (let column = 0; column < side; column += 1) {
+      const offsetX = column - radius;
+      const offsetY = row - radius;
+      if (Math.hypot(offsetX, offsetY) > radius) continue;
 
-      values.push({
-        evidence: colourEvidence(
-          pixel(image, centreX + offsetX, centreY + offsetY),
-          palette.background,
-          target
-        ),
-        distance
-      });
+      evidence[row * side + column] = colourEvidence(
+        pixel(image, centreX + offsetX, centreY + offsetY),
+        palette.background,
+        target
+      );
     }
   }
 
-  const ranked = values
-    .map((value) => value.evidence)
+  let seed = radius * side + radius;
+  let peak = 0;
+
+  for (let row = Math.max(0, radius - 2); row <= Math.min(side - 1, radius + 2); row += 1) {
+    for (
+      let column = Math.max(0, radius - 2);
+      column <= Math.min(side - 1, radius + 2);
+      column += 1
+    ) {
+      const index = row * side + column;
+      const value = evidence[index] ?? 0;
+      if (value <= peak) continue;
+      peak = value;
+      seed = index;
+    }
+  }
+
+  if (peak < 0.16) return { size: 0, opacity: 0, confidence: 0 };
+
+  const threshold = Math.max(0.16, peak * 0.35);
+  const visited = new Uint8Array(side * side);
+  const queue: number[] = [seed];
+  visited[seed] = 1;
+  const component: Array<{ value: number; distance: number }> = [];
+
+  while (queue.length > 0) {
+    const index = queue.shift()!;
+    const value = evidence[index] ?? 0;
+    if (value < threshold) continue;
+
+    const row = Math.floor(index / side);
+    const column = index % side;
+    const offsetX = column - radius;
+    const offsetY = row - radius;
+    component.push({
+      value,
+      distance: Math.hypot(offsetX, offsetY)
+    });
+
+    for (let deltaY = -1; deltaY <= 1; deltaY += 1) {
+      for (let deltaX = -1; deltaX <= 1; deltaX += 1) {
+        if (deltaX === 0 && deltaY === 0) continue;
+        const nextRow = row + deltaY;
+        const nextColumn = column + deltaX;
+        if (
+          nextRow < 0 ||
+          nextColumn < 0 ||
+          nextRow >= side ||
+          nextColumn >= side
+        ) {
+          continue;
+        }
+
+        const next = nextRow * side + nextColumn;
+        if (visited[next] !== 0) continue;
+        visited[next] = 1;
+        if ((evidence[next] ?? 0) >= threshold) queue.push(next);
+      }
+    }
+  }
+
+  if (component.length === 0) {
+    return { size: 0, opacity: 0, confidence: 0 };
+  }
+
+  const ranked = component
+    .map((value) => value.value)
     .sort((left, right) => right - left);
   const opacitySamples = ranked.slice(0, Math.min(7, ranked.length));
   const opacity = opacitySamples.reduce((sum, value) => sum + value, 0) /
     Math.max(1, opacitySamples.length);
-  const visible = values.filter((value) => {
-    return value.evidence >= Math.max(0.18, opacity * 0.38);
-  });
-  const extent = visible.reduce((maximum, value) => {
+  const extent = component.reduce((maximum, value) => {
     return Math.max(maximum, value.distance);
   }, 0);
   const size = extent * 2 / scale;
   const confidence = clamp(
-    visible.length / Math.max(1, values.length * 0.12),
+    component.length / Math.max(1, side * side * 0.12),
     0,
     1
   );
@@ -249,7 +308,7 @@ function observeStar(
   );
   const normalisedSize = profile.size / calibration.sizeScale;
   const normalisedOpacity = profile.opacity / calibration.opacityScale;
-  const size = orderedLevel(normalisedSize, starSizes, 3.2);
+  const size = orderedLevel(normalisedSize, starSizes, 4.5);
   const opacity = orderedLevel(normalisedOpacity, starOpacities, 0.085);
   const profileConfidence = Math.min(profile.confidence, calibration.confidence);
   const components = {
