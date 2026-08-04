@@ -195,6 +195,18 @@ function observeStar(
   };
 }
 
+export function observeStarParitySlot(
+  image: ImageData,
+  palette: ObservedPalette,
+  slot: number
+): ByteObservation {
+  if (!Number.isInteger(slot) || slot < 0 || slot >= seedSlotCount) {
+    throw new Error(`star slot must be between 0 and ${seedSlotCount - 1}`);
+  }
+
+  return observeStar(image, palette, slot);
+}
+
 export function observeStarParity(
   image: ImageData,
   palette: ObservedPalette
