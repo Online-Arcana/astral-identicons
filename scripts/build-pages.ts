@@ -4,9 +4,12 @@ import { page } from "../src/page.ts";
 
 const root = `${import.meta.dir}/..`;
 const outputRoot = `${root}/dist`;
+const vendorRoot = `${outputRoot}/vendor`;
+const openCvVersion = "4.12.0";
+const openCvSource = `https://docs.opencv.org/${openCvVersion}/opencv.js`;
 
 await rm(outputRoot, { recursive: true, force: true });
-await mkdir(outputRoot, { recursive: true });
+await mkdir(vendorRoot, { recursive: true });
 
 const build = await Bun.build({
   entrypoints: [`${root}/src/web.ts`],
@@ -36,10 +39,32 @@ const bundleName = `app.${bundleHash}.js`;
 
 await Bun.write(`${outputRoot}/${bundleName}`, browserBundle);
 
+const openCvResponse = await fetch(openCvSource);
+if (!openCvResponse.ok) {
+  throw new Error(
+    `Could not download OpenCV.js ${openCvVersion}: ${openCvResponse.status} ${openCvResponse.statusText}`
+  );
+}
+
+const openCvBytes = new Uint8Array(await openCvResponse.arrayBuffer());
+if (openCvBytes.byteLength < 1_000_000) {
+  throw new Error(
+    `Downloaded OpenCV.js is unexpectedly small (${openCvBytes.byteLength} bytes)`
+  );
+}
+
+const openCvHash = createHash("sha256")
+  .update(openCvBytes)
+  .digest("hex")
+  .slice(0, 12);
+const openCvName = `opencv.${openCvHash}.js`;
+await Bun.write(`${vendorRoot}/${openCvName}`, openCvBytes);
+
 const sourceIndex = await Bun.file(`${root}/public/index.html`).text();
 const index = page(sourceIndex, {
   script: `./${bundleName}`,
-  stylesheet: "./responsive.css"
+  stylesheet: "./responsive.css",
+  opencv: `./vendor/${openCvName}`
 });
 
 await Bun.write(`${outputRoot}/index.html`, index);
@@ -47,4 +72,6 @@ await cp(`${root}/public/responsive.css`, `${outputRoot}/responsive.css`);
 await cp(`${root}/assets`, `${outputRoot}/assets`, { recursive: true });
 await Bun.write(`${outputRoot}/.nojekyll`, "");
 
-console.log(`GitHub Pages site built at ${outputRoot}`);
+console.log(
+  `GitHub Pages site built at ${outputRoot} with OpenCV.js ${openCvVersion}`
+);
