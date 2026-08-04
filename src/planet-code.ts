@@ -1,5 +1,10 @@
 import {
+  planetAnchor,
   planetAnchorCount,
+  planetAnchorGroup,
+  planetAnchorGroupCount,
+  planetAnchorPosition,
+  planetAnchorPositionCount,
   planetCount,
   planetDensityLevelCount,
   planetaryGlyphs,
@@ -31,8 +36,7 @@ export interface PlanetaryConfiguration {
   readonly planets: readonly PlanetState[];
 }
 
-export interface PlanetaryAlternative
-  extends Omit<PlanetState, "key"> {
+export interface PlanetaryAlternative extends Omit<PlanetState, "key"> {
   readonly confidence: number;
 }
 
@@ -50,6 +54,7 @@ export interface PlanetaryIdentityCandidate {
 const identityByteCount = 32;
 const identitySpace = 1n << 256n;
 const localRadix = BigInt(planetLocalStateCount);
+const anchorPositionRadix = BigInt(planetAnchorPositionCount);
 
 export function permutationCount(total: number, selected: number): bigint {
   if (!Number.isInteger(total) || !Number.isInteger(selected)) {
@@ -66,10 +71,14 @@ export function permutationCount(total: number, selected: number): bigint {
   return result;
 }
 
-export const planetLocationSpace = permutationCount(
-  planetAnchorCount,
+export const planetGroupPermutationSpace = permutationCount(
+  planetAnchorGroupCount,
   planetCount
 );
+export const planetAnchorPositionSpace =
+  anchorPositionRadix ** BigInt(planetCount);
+export const planetLocationSpace =
+  planetGroupPermutationSpace * planetAnchorPositionSpace;
 export const planetLocalSpace = localRadix ** BigInt(planetCount);
 export const planetaryConfigurationSpace =
   planetLocationSpace * planetLocalSpace;
@@ -77,7 +86,7 @@ export const reservedPlanetaryConfigurations =
   planetaryConfigurationSpace - identitySpace;
 
 if (planetaryConfigurationSpace <= identitySpace) {
-  throw new Error("v9 planetary configuration cannot hold every 32-byte identity");
+  throw new Error("v9 separated planetary configuration cannot hold every 32-byte identity");
 }
 
 function integer(
@@ -110,14 +119,12 @@ function unrankPermutation(
     const block = permutationCount(total - index - 1, remaining);
     const choice = Number(rank / block);
     rank %= block;
-
     const picked = available.splice(choice, 1)[0];
     if (picked === undefined) {
       throw new Error("permutation rank selected an unavailable value");
     }
     result.push(picked);
   }
-
   return result;
 }
 
@@ -136,26 +143,64 @@ function rankPermutation(
   for (let index = 0; index < values.length; index += 1) {
     const value = values[index]!;
     integer(value, 0, total - 1, "permutation value");
-
     const choice = available.indexOf(value);
-    if (choice < 0) {
-      throw new Error("permutation values must be distinct");
-    }
-
+    if (choice < 0) throw new Error("permutation values must be distinct");
     const remaining = selected - index - 1;
     const block = permutationCount(total - index - 1, remaining);
     result += BigInt(choice) * block;
     available.splice(choice, 1);
   }
-
   return result;
+}
+
+function unrankLocations(value: bigint): readonly number[] {
+  if (value < 0n || value >= planetLocationSpace) {
+    throw new Error("planet location rank is outside its configuration space");
+  }
+
+  const groupRank = value % planetGroupPermutationSpace;
+  let positionRank = value / planetGroupPermutationSpace;
+  const groups = unrankPermutation(
+    groupRank,
+    planetAnchorGroupCount,
+    planetCount
+  );
+  const anchors = groups.map((group) => {
+    const position = Number(positionRank % anchorPositionRadix);
+    positionRank /= anchorPositionRadix;
+    return planetAnchor(group, position);
+  });
+
+  if (positionRank !== 0n) {
+    throw new Error("planet position rank exceeded its configuration space");
+  }
+  return anchors;
+}
+
+function rankLocations(anchors: readonly number[]): bigint {
+  if (anchors.length !== planetCount) {
+    throw new Error(`planet locations must contain exactly ${planetCount} anchors`);
+  }
+
+  const groups = anchors.map(planetAnchorGroup);
+  const groupRank = rankPermutation(
+    groups,
+    planetAnchorGroupCount,
+    planetCount
+  );
+  let positionRank = 0n;
+  let multiplier = 1n;
+  for (const anchor of anchors) {
+    positionRank += BigInt(planetAnchorPosition(anchor)) * multiplier;
+    multiplier *= anchorPositionRadix;
+  }
+  return positionRank * planetGroupPermutationSpace + groupRank;
 }
 
 function bytesToInteger(bytes: Uint8Array): bigint {
   if (bytes.byteLength !== identityByteCount) {
     throw new Error("v9 identity must contain exactly 32 bytes");
   }
-
   let result = 0n;
   for (const byte of bytes) result = (result << 8n) | BigInt(byte);
   return result;
@@ -165,15 +210,12 @@ function integerToBytes(value: bigint): Uint8Array {
   if (value < 0n || value >= identitySpace) {
     throw new Error("identity integer is outside the 256-bit range");
   }
-
   const result = new Uint8Array(identityByteCount);
   let remaining = value;
-
   for (let index = result.length - 1; index >= 0; index -= 1) {
     result[index] = Number(remaining & 0xffn);
     remaining >>= 8n;
   }
-
   return result;
 }
 
@@ -182,12 +224,11 @@ function satellitePositions(value: SatelliteState): readonly number[] {
 }
 
 function encodeSatellites(value: SatelliteState): number {
-  const rank = rankPermutation(
+  return Number(rankPermutation(
     satellitePositions(value),
     satellitePositionCount,
     satelliteCount
-  );
-  return Number(rank);
+  ));
 }
 
 function decodeSatellites(value: number): SatelliteState {
@@ -202,7 +243,6 @@ function decodeSatellites(value: number): SatelliteState {
     satellitePositionCount,
     satelliteCount
   );
-
   return {
     small: positions[0]!,
     medium: positions[1]!,
@@ -212,19 +252,9 @@ function decodeSatellites(value: number): SatelliteState {
 
 function encodeLocalState(value: PlanetState): number {
   integer(value.anchor, 0, planetAnchorCount - 1, "planet anchor");
-  integer(
-    value.rotation,
-    0,
-    planetRotationLevelCount - 1,
-    "planet rotation"
-  );
+  integer(value.rotation, 0, planetRotationLevelCount - 1, "planet rotation");
   integer(value.size, 0, planetSizeLevelCount - 1, "planet size");
-  integer(
-    value.density,
-    0,
-    planetDensityLevelCount - 1,
-    "planet density"
-  );
+  integer(value.density, 0, planetDensityLevelCount - 1, "planet density");
 
   let result = value.rotation;
   result = result * planetSizeLevelCount + value.size;
@@ -239,7 +269,6 @@ function decodeLocalState(
   value: number
 ): PlanetState {
   integer(value, 0, planetLocalStateCount - 1, "planet local state");
-
   let remaining = value;
   const satellites = decodeSatellites(remaining % satelliteConfigurationCount);
   remaining = Math.floor(remaining / satelliteConfigurationCount);
@@ -247,12 +276,10 @@ function decodeLocalState(
   remaining = Math.floor(remaining / planetDensityLevelCount);
   const size = remaining % planetSizeLevelCount;
   remaining = Math.floor(remaining / planetSizeLevelCount);
-  const rotation = remaining;
-
   return {
     key,
     anchor,
-    rotation,
+    rotation: remaining,
     size,
     density,
     satellites
@@ -266,8 +293,7 @@ function validateConfiguration(
     throw new Error(`v9 configuration must contain exactly ${planetCount} planets`);
   }
 
-  const anchors = new Set<number>();
-
+  const groups = new Set<number>();
   for (let index = 0; index < planetaryGlyphs.length; index += 1) {
     const expected = planetaryGlyphs[index]!;
     const planet = value.planets[index]!;
@@ -277,12 +303,12 @@ function validateConfiguration(
       );
     }
     encodeLocalState(planet);
-    if (anchors.has(planet.anchor)) {
-      throw new Error("all eleven planetary anchors must be distinct");
+    const group = planetAnchorGroup(planet.anchor);
+    if (groups.has(group)) {
+      throw new Error("all eleven planetary anchor groups must be distinct");
     }
-    anchors.add(planet.anchor);
+    groups.add(group);
   }
-
   return value.planets;
 }
 
@@ -292,11 +318,7 @@ export function planetaryConfiguration(
   const numericIdentity = bytesToInteger(identity);
   const locationRank = numericIdentity % planetLocationSpace;
   let localRank = numericIdentity / planetLocationSpace;
-  const anchors = unrankPermutation(
-    locationRank,
-    planetAnchorCount,
-    planetCount
-  );
+  const anchors = unrankLocations(locationRank);
   const planets: PlanetState[] = [];
 
   for (let index = 0; index < planetaryGlyphs.length; index += 1) {
@@ -305,11 +327,9 @@ export function planetaryConfiguration(
     localRank /= localRadix;
     planets.push(decodeLocalState(glyph.key, anchors[index]!, local));
   }
-
   if (localRank !== 0n) {
     throw new Error("identity exceeded the planetary local-state capacity");
   }
-
   return { planets };
 }
 
@@ -317,11 +337,7 @@ export function planetaryIdentity(
   configuration: PlanetaryConfiguration
 ): Uint8Array {
   const planets = validateConfiguration(configuration);
-  const locationRank = rankPermutation(
-    planets.map((planet) => planet.anchor),
-    planetAnchorCount,
-    planetCount
-  );
+  const locationRank = rankLocations(planets.map((planet) => planet.anchor));
   let localRank = 0n;
   let multiplier = 1n;
 
@@ -334,7 +350,6 @@ export function planetaryIdentity(
   if (rank >= identitySpace) {
     throw new Error("planetary configuration is a reserved v9 state");
   }
-
   return integerToBytes(rank);
 }
 
@@ -362,22 +377,19 @@ export function planetaryIdentityCandidates(
 
   interface Beam {
     readonly planets: readonly PlanetState[];
-    readonly anchors: ReadonlySet<number>;
+    readonly groups: ReadonlySet<number>;
     readonly score: number;
   }
 
   let beams: readonly Beam[] = [{
     planets: [],
-    anchors: new Set<number>(),
+    groups: new Set<number>(),
     score: 0
   }];
 
   for (const glyph of planetaryGlyphs) {
     const observation = byKey.get(glyph.key);
-    if (!observation || observation.alternatives.length === 0) {
-      return [];
-    }
-
+    if (!observation || observation.alternatives.length === 0) return [];
     const alternatives = [...observation.alternatives]
       .filter((alternative) => Number.isFinite(alternative.confidence))
       .filter((alternative) => alternative.confidence > 0)
@@ -387,7 +399,13 @@ export function planetaryIdentityCandidates(
 
     for (const beam of beams) {
       for (const alternative of alternatives) {
-        if (beam.anchors.has(alternative.anchor)) continue;
+        let group: number;
+        try {
+          group = planetAnchorGroup(alternative.anchor);
+        } catch {
+          continue;
+        }
+        if (beam.groups.has(group)) continue;
 
         const planet: PlanetState = {
           key: glyph.key,
@@ -397,7 +415,6 @@ export function planetaryIdentityCandidates(
           density: alternative.density,
           satellites: alternative.satellites
         };
-
         try {
           encodeLocalState(planet);
         } catch {
@@ -406,7 +423,7 @@ export function planetaryIdentityCandidates(
 
         expanded.push({
           planets: [...beam.planets, planet],
-          anchors: new Set([...beam.anchors, planet.anchor]),
+          groups: new Set([...beam.groups, group]),
           score: beam.score + Math.log(Math.max(alternative.confidence, 1e-12))
         });
       }
@@ -420,12 +437,8 @@ export function planetaryIdentityCandidates(
 
   const seen = new Set<string>();
   const result: PlanetaryIdentityCandidate[] = [];
-
   for (const beam of beams) {
-    const configuration: PlanetaryConfiguration = {
-      planets: beam.planets
-    };
-
+    const configuration: PlanetaryConfiguration = { planets: beam.planets };
     try {
       const identity = planetaryIdentity(configuration);
       const key = identityKey(identity);
@@ -437,9 +450,8 @@ export function planetaryIdentityCandidates(
         confidence: Math.exp(beam.score / planetCount)
       });
     } catch {
-      // Reserved or otherwise malformed global configurations are invalid.
+      // Reserved or malformed global configurations are invalid.
     }
   }
-
   return result.sort((left, right) => right.confidence - left.confidence);
 }
