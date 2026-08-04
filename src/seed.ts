@@ -1,6 +1,7 @@
 import { paletteNonce } from "./palette-nonce.ts";
 import { paletteDraw } from "./prng.ts";
 import { rsEncode, rsRecoverErasures, rsValid } from "./rs.ts";
+import { base64Url, seedBytes, seedMaterial } from "./seed-value.ts";
 import { signs, type Sign } from "./sign.ts";
 import type { IdenticonInput } from "./types.ts";
 
@@ -22,7 +23,8 @@ export const seedNibbleCount = seedCodewordByteCount * 2;
 export const seedSlotCount = seedNibbleCount;
 
 const payloadMagic = 0xa5;
-const payloadVersion = 1;
+const textPayloadVersion = 1;
+const keyPayloadVersion = 2;
 const payloadSeedOffset = 3;
 const payloadSignsOffset = payloadSeedOffset + seedMaxByteCount;
 const payloadCrcOffset = seedDataByteCount - 2;
@@ -63,29 +65,18 @@ function crc16(bytes: Uint8Array): number {
   return crc;
 }
 
-function seedBytes(seed: string): Uint8Array {
-  if (seed.length === 0) throw new Error("seed must be a non-empty string");
-  if (seed.trim() !== seed) {
-    throw new Error("seed must not contain leading or trailing whitespace");
-  }
-
-  const bytes = encoder.encode(seed);
-  if (bytes.length > seedMaxByteCount) {
-    throw new Error(
-      `seed must contain at most ${seedMaxByteCount} UTF-8 bytes so it can be recovered exactly`
-    );
-  }
-
-  return bytes;
-}
-
 export function seedByteLength(seed: string): number {
-  return seedBytes(seed).length;
+  return seedBytes({ seed, seedKind: "text" }).length;
 }
 
-export function seedPaletteIndex(seed: string): number {
-  seedBytes(seed);
-  return paletteDraw(seed, paletteNonce(seed), paletteCount);
+export function seedPaletteIndex(value: string | IdenticonInput): number {
+  if (typeof value === "string") {
+    seedByteLength(value);
+    return paletteDraw(value, paletteNonce(value), paletteCount);
+  }
+
+  const material = seedMaterial(value);
+  return paletteDraw(material, paletteNonce(material, value), paletteCount);
 }
 
 export function canonicalPaletteSeed(index: number): string {
@@ -117,11 +108,11 @@ function unpackSign(value: number): Sign {
 }
 
 export function seedPayload(value: IdenticonInput): Uint8Array {
-  const bytes = seedBytes(value.seed);
+  const bytes = seedBytes(value);
   const result = new Uint8Array(seedDataByteCount);
 
   result[0] = payloadMagic;
-  result[1] = payloadVersion;
+  result[1] = value.seedKind === "ed25519" ? keyPayloadVersion : textPayloadVersion;
   result[2] = bytes.length;
   result.set(bytes, payloadSeedOffset);
   result.set(packedSigns(value), payloadSignsOffset);
@@ -186,13 +177,21 @@ function decodedPayload(data: Uint8Array): IdenticonInput {
     throw new Error(`visual payload must contain exactly ${seedDataByteCount} data bytes`);
   }
 
-  if (data[0] !== payloadMagic || data[1] !== payloadVersion) {
+  if (data[0] !== payloadMagic) {
     throw new Error("visual payload header is invalid");
   }
 
+  const version = data[1]!;
+  if (version !== textPayloadVersion && version !== keyPayloadVersion) {
+    throw new Error("visual payload version is unsupported");
+  }
+
   const length = data[2]!;
-  if (length === 0 || length > seedMaxByteCount) {
+  if (version === textPayloadVersion && (length === 0 || length > seedMaxByteCount)) {
     throw new Error("visual payload seed length is invalid");
+  }
+  if (version === keyPayloadVersion && length !== seedMaxByteCount) {
+    throw new Error("visual payload Ed25519 key length is invalid");
   }
 
   for (let index = payloadSeedOffset + length; index < payloadSignsOffset; index += 1) {
@@ -205,15 +204,23 @@ function decodedPayload(data: Uint8Array): IdenticonInput {
     throw new Error("visual payload checksum failed");
   }
 
+  const bytes = data.slice(payloadSeedOffset, payloadSeedOffset + length);
   let seed: string;
-  try {
-    seed = decoder.decode(data.slice(payloadSeedOffset, payloadSeedOffset + length));
-  } catch {
-    throw new Error("visual payload seed is not valid UTF-8");
-  }
+  let seedKind: IdenticonInput["seedKind"];
 
-  if (encoder.encode(seed).length !== length || seed.trim() !== seed || seed.length === 0) {
-    throw new Error("visual payload seed text is invalid");
+  if (version === keyPayloadVersion) {
+    seed = base64Url(bytes);
+    seedKind = "ed25519";
+  } else {
+    try {
+      seed = decoder.decode(bytes);
+    } catch {
+      throw new Error("visual payload seed is not valid UTF-8");
+    }
+    if (encoder.encode(seed).length !== length || seed.trim() !== seed || seed.length === 0) {
+      throw new Error("visual payload seed text is invalid");
+    }
+    seedKind = "text";
   }
 
   const first = data[payloadSignsOffset]!;
@@ -222,6 +229,7 @@ function decodedPayload(data: Uint8Array): IdenticonInput {
 
   return {
     seed,
+    seedKind,
     solar: unpackSign(first >>> 4),
     lunar: unpackSign(first & 0x0f),
     ascendant: unpackSign(second >>> 4),
