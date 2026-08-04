@@ -28,8 +28,8 @@ if (!Number.isInteger(codeSectorCount)) {
 
 export const northStar: NorthStarReference = {
   angle: -90,
-  radius: 370,
-  size: 28,
+  radius: 366,
+  size: 34,
   opacity: 1
 };
 
