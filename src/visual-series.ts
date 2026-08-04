@@ -8,7 +8,7 @@ import { recoverVisualCode, type VisualCodeReading } from "./visual-code.ts";
 
 export interface VisualCaptureEvidence {
   readonly at: number;
-  readonly stars: readonly StarComponentObservation[];
+  readonly stars: readonly ByteObservation[];
   readonly quality: number;
   readonly centre: readonly boolean[];
   readonly ring: readonly boolean[];
@@ -41,6 +41,8 @@ interface ComponentReading {
   readonly value: number | null;
   readonly confidence: number;
 }
+
+type Components = Omit<StarComponentObservation, "value" | "confidence">;
 
 function componentEvidence(values: number): ComponentEvidence {
   return {
@@ -92,14 +94,53 @@ function starReading(evidence: SlotEvidence): StarComponentObservation {
   const position = componentReading(evidence.position);
   const size = componentReading(evidence.size);
   const opacity = componentReading(evidence.opacity);
-
-  return {
+  const components: Components = {
     position: position.value,
     sizeLevel: size.value,
     opacityLevel: opacity.value,
     positionConfidence: position.confidence,
     sizeConfidence: size.confidence,
     opacityConfidence: opacity.confidence
+  };
+  const combined = byteObservation(components);
+
+  return {
+    ...components,
+    value: combined.value,
+    confidence: combined.confidence
+  };
+}
+
+function componentsOf(observation: ByteObservation): Components {
+  if (
+    "position" in observation &&
+    "sizeLevel" in observation &&
+    "opacityLevel" in observation &&
+    "positionConfidence" in observation &&
+    "sizeConfidence" in observation &&
+    "opacityConfidence" in observation
+  ) {
+    return observation as StarComponentObservation;
+  }
+
+  if (observation.value === null) {
+    return {
+      position: null,
+      sizeLevel: null,
+      opacityLevel: null,
+      positionConfidence: observation.confidence,
+      sizeConfidence: observation.confidence,
+      opacityConfidence: observation.confidence
+    };
+  }
+
+  return {
+    position: observation.value >>> 4,
+    sizeLevel: (observation.value & 0x0f) >>> 2,
+    opacityLevel: observation.value & 0x03,
+    positionConfidence: observation.confidence,
+    sizeConfidence: observation.confidence,
+    opacityConfidence: observation.confidence
   };
 }
 
@@ -156,7 +197,10 @@ export class VisualCaptureSeries {
 
   snapshot(): VisualCaptureSnapshot {
     const components = this.#stars.map(starReading);
-    const stars: ByteObservation[] = components.map(byteObservation);
+    const stars: ByteObservation[] = components.map((value) => ({
+      value: value.value,
+      confidence: value.confidence
+    }));
     const locatedStars = components.filter((value) => {
       return value.position !== null;
     }).length;
@@ -202,11 +246,11 @@ export class VisualCaptureSeries {
   }
 
   private addEvidence(
-    observations: readonly StarComponentObservation[],
+    observations: readonly ByteObservation[],
     weight: number
   ): void {
     for (let index = 0; index < observations.length; index += 1) {
-      const observation = observations[index]!;
+      const observation = componentsOf(observations[index]!);
       const evidence = this.#stars[index]!;
 
       this.addComponent(
