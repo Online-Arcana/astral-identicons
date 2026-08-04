@@ -25,12 +25,14 @@ export interface GlyphMark {
   readonly endX: number;
   readonly endY: number;
   readonly length: number;
+  readonly radialOffset: number;
 }
 
 export const glyphCarrierCount = 20;
 export const glyphBytesPerCarrier = 2;
 export const glyphMarkCount = 8;
-export const glyphMarkLengths = [5, 10, 15, 20] as const;
+export const glyphMarkOffsets = [0, 10, 20, 30] as const;
+export const glyphMarkLength = 6;
 export const glyphMarkStroke = 4;
 export const glyphMarkHaloStroke = 9;
 
@@ -113,8 +115,8 @@ export function glyphMark(
 
   const angle = -67.5 + index * 45;
   const radians = angle * Math.PI / 180;
-  const radius = carrierRadius(carrier.size);
-  const length = glyphMarkLengths[digit]!;
+  const radialOffset = glyphMarkOffsets[digit]!;
+  const radius = carrierRadius(carrier.size) + radialOffset;
   const unitX = Math.cos(radians);
   const unitY = Math.sin(radians);
   const startX = carrier.x + unitX * radius;
@@ -127,9 +129,10 @@ export function glyphMark(
     angle,
     startX,
     startY,
-    endX: startX + unitX * length,
-    endY: startY + unitY * length,
-    length
+    endX: startX + unitX * glyphMarkLength,
+    endY: startY + unitY * glyphMarkLength,
+    length: glyphMarkLength,
+    radialOffset
   };
 }
 
