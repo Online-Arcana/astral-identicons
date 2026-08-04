@@ -60,7 +60,7 @@ export const starParityCodewordByteCount = seedSlotCount;
 export const starParityExpansionByteCount = seedSlotCount;
 export const starParityFullCodewordByteCount =
   starParityDataByteCount + starParityExpansionByteCount;
-export const starSizes = [8, 12, 16, 20] as const;
+export const starSizes = [8, 14, 20, 26] as const;
 export const starOpacities = [0.7, 0.8, 0.9, 1] as const;
 
 if (starParityFullCodewordByteCount > 255) {
