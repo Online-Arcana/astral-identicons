@@ -1,10 +1,7 @@
 import type { Sign } from "./sign.ts";
 
-export type SeedKind = "text" | "ed25519";
-
 export interface IdenticonInput {
   seed: string;
-  seedKind?: SeedKind;
   solar: Sign;
   lunar: Sign;
   ascendant: Sign;
@@ -15,7 +12,6 @@ export interface IdenticonInput {
 
 export interface RawIdenticonInput {
   seed: unknown;
-  seedKind?: unknown;
   solar: unknown;
   lunar: unknown;
   ascendant: unknown;
