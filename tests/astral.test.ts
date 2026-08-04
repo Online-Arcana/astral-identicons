@@ -73,6 +73,13 @@ describe("packaged astral input", () => {
     const bytes = container(new Uint8Array(32));
     bytes.set(new TextEncoder().encode("ASTRPKG3"), 0);
     bytes[8] = 3;
-    expect(() => astralInput(bytes)).toThrow("ASTRPKG4");
+
+    let message = "";
+    try {
+      astralInput(bytes);
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+    expect(message).toContain("ASTRPKG4");
   });
 });
