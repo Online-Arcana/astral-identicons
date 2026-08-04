@@ -3,12 +3,12 @@ import { buildIdenticon } from "./build.ts";
 import { palette } from "./palette.ts";
 import { Scanner } from "./scan.ts";
 import { seedPaletteIndex } from "./seed.ts";
+import { isPublicKey } from "./seed-value.ts";
 import { label, signs, type Sign } from "./sign.ts";
-import type { AssetSource, IdenticonInput, SeedKind } from "./types.ts";
+import type { AssetSource, IdenticonInput } from "./types.ts";
 
 const defaults: IdenticonInput = {
   seed: "62-70-F2-Example",
-  seedKind: "text",
   solar: "capricorn",
   lunar: "virgo",
   ascendant: "capricorn",
@@ -61,7 +61,6 @@ const assetCache = new Map<string, Promise<string>>();
 let renderVersion = 0;
 let latestSvg = "";
 let assetsWarmed = false;
-let activeSeedKind: SeedKind = defaults.seedKind;
 
 for (const [name, title] of fields) {
   const wrapper = document.createElement("div");
@@ -92,7 +91,6 @@ function value(): IdenticonInput {
 
   return {
     seed: String(data.get("seed") ?? "").trim(),
-    seedKind: activeSeedKind,
     solar: String(data.get("solar")) as Sign,
     lunar: String(data.get("lunar")) as Sign,
     ascendant: String(data.get("ascendant")) as Sign,
@@ -103,7 +101,6 @@ function value(): IdenticonInput {
 }
 
 function apply(value: IdenticonInput): void {
-  activeSeedKind = value.seedKind;
   seedField.value = value.seed;
 
   for (const [name] of fields) {
@@ -217,7 +214,7 @@ async function render(): Promise<void> {
   showPalette(palette(data));
 
   const paletteIndex = seedPaletteIndex(data);
-  const seedLabel = data.seedKind === "ed25519" ? "public key" : "exact seed";
+  const seedLabel = isPublicKey(data.seed) ? "public key" : "exact seed";
   status.textContent = `The ${seedLabel} and all six signs are distributed across the glyph carriers. The parity stars repair missing or ambiguous glyph bytes. Palette ${paletteIndex.toString(16).padStart(2, "0").toUpperCase()}, the constellation and the duplicated signs provide independent recognition evidence.`;
   status.className = "status";
 }
@@ -246,17 +243,14 @@ const scanner = new Scanner({
     apply(result);
 
     void render().then(() => {
-      const recovered = result.seedKind === "ed25519" ? "public key" : "exact seed";
+      const recovered = isPublicKey(result.seed) ? "public key" : "exact seed";
       status.textContent = `Camera recovered the ${recovered} "${result.seed}" and all six signs from ${result.cumulativeFrames} useful capture${result.cumulativeFrames === 1 ? "" : "s"}. ${correctionSummary(result.correctedBytes)}`;
       status.className = "status";
     }).catch(showError);
   }
 });
 
-form.addEventListener("input", (event) => {
-  if (event.target === seedField) activeSeedKind = "text";
-  schedule();
-});
+form.addEventListener("input", schedule);
 
 astralFile.addEventListener("change", () => {
   const selected = astralFile.files?.[0];
@@ -286,7 +280,6 @@ function randomSeed(): string {
 }
 
 randomButton.addEventListener("click", () => {
-  activeSeedKind = "text";
   seedField.value = randomSeed();
   astralFile.value = "";
   schedule();
@@ -325,7 +318,7 @@ form.addEventListener("submit", async (event) => {
     link.click();
 
     window.setTimeout(() => URL.revokeObjectURL(url), 0);
-    status.textContent = data.seedKind === "ed25519"
+    status.textContent = isPublicKey(data.seed)
       ? "Saved standalone SVG with the exact recoverable public key and signs."
       : "Saved standalone SVG with the exact recoverable seed and signs.";
   } catch (error) {
