@@ -6,6 +6,8 @@ import {
   stopStream
 } from "./camera.ts";
 import {
+  captureMinimumFrames,
+  captureMinimumMilliseconds,
   captureObservationTarget,
   captureReady,
   recoverCaptured
@@ -24,7 +26,7 @@ import {
   type ObservedPalette
 } from "./scan-colour.ts";
 import { inspectFrame, loadOpenCv, type FrameQuality } from "./opencv.ts";
-import { canvas as layoutCanvas, placements, ringPlacements } from "./layout.ts";
+import { placements, ringPlacements } from "./layout.ts";
 import { observeStarParity } from "./scan-star-parity.ts";
 import {
   verifyExpectedSigns,
@@ -59,6 +61,7 @@ interface FrameEvidence {
   readonly quality: FrameQuality;
   readonly stars: readonly ByteObservation[];
   readonly score: number;
+  readonly at: number;
 }
 
 interface CameraCapabilities extends MediaTrackCapabilities {
@@ -72,6 +75,9 @@ type Role = keyof Omit<IdenticonInput, "seed">;
 const automaticInterval = 90;
 const focusSettleMilliseconds = 450;
 const analysisSize = 512;
+const retainedFrameLimit = 12;
+const retryAdditionalFrames = 4;
+const retryAdditionalMilliseconds = 700;
 const minimumSharpness = 12;
 const minimumContrast = 7;
 const minimumExposure = 0.18;
@@ -97,7 +103,7 @@ const layoutPlaceholder: IdenticonInput = {
   solar: "aries",
   lunar: "aries",
   ascendant: "aries",
-  midheaven: "aries",
+  midheaven: "libra",
   descendant: "cancer",
   imumCoeli: "aries"
 };
@@ -173,7 +179,6 @@ function loadImage(file: File): Promise<HTMLImageElement> {
 function captureImage(image: HTMLImageElement, canvas: HTMLCanvasElement): void {
   const width = image.naturalWidth;
   const height = image.naturalHeight;
-
   if (width === 0 || height === 0) {
     throw new Error("The selected photo has no readable image dimensions");
   }
@@ -214,7 +219,8 @@ function usable(quality: FrameQuality): boolean {
 function chooseAlignment(
   source: HTMLCanvasElement,
   observed: ObservedPalette,
-  vision: Awaited<ReturnType<typeof loadOpenCv>>
+  vision: Awaited<ReturnType<typeof loadOpenCv>>,
+  at: number
 ): FrameEvidence {
   const raw = imageData(source);
   const variants = [observed, swapPalette(observed)] as const;
@@ -241,7 +247,8 @@ function chooseAlignment(
     angle: selectedAngle,
     quality,
     stars,
-    score: quality.score * 100 + readable(stars) * 1.5
+    score: quality.score * 100 + readable(stars) * 1.5,
+    at
   };
 }
 
@@ -249,6 +256,7 @@ function progressMessage(snapshot: VisualCaptureSnapshot): string {
   const useful = (snapshot.usefulMilliseconds / 1_000).toFixed(1);
   return [
     `${useful}s useful capture`,
+    `${snapshot.frames} comparison frames`,
     `${snapshot.observedStars}/${seedSlotCount} distinct recovery stars`,
     `${seedDataByteCount} mathematical minimum`,
     `${captureObservationTarget} capture target`,
@@ -275,16 +283,20 @@ export class Scanner {
   readonly #file = required<HTMLInputElement>("#scan-file");
   readonly #close = required<HTMLButtonElement>("#scan-close");
   readonly #frozen = document.createElement("canvas");
-  readonly #mosaic = document.createElement("canvas");
   readonly #series = new VisualCaptureSeries();
   readonly #options: ScannerOptions;
   readonly #progress = document.createElement("div");
   readonly #progressFill = document.createElement("div");
   readonly #progressText = document.createElement("p");
-  readonly #centreMosaicScores = Array<number>(centreRegions.length)
+  readonly #frames: FrameEvidence[] = [];
+  readonly #centreScores = Array<number>(centreRegions.length)
     .fill(Number.NEGATIVE_INFINITY);
-  readonly #ringMosaicScores = Array<number>(ringRegions.length)
+  readonly #ringScores = Array<number>(ringRegions.length)
     .fill(Number.NEGATIVE_INFINITY);
+  readonly #centreFrames = Array<FrameEvidence | undefined>(centreRegions.length)
+    .fill(undefined);
+  readonly #ringFrames = Array<FrameEvidence | undefined>(ringRegions.length)
+    .fill(undefined);
 
   #stream: MediaStream | undefined;
   #openRequest: Promise<void> | undefined;
@@ -293,17 +305,15 @@ export class Scanner {
   #processing = false;
   #session = 0;
   #bestFrame: FrameEvidence | undefined;
-  #baseMosaicScore = Number.NEGATIVE_INFINITY;
+  #retryAfterFrames = captureMinimumFrames;
+  #retryAfterMilliseconds = captureMinimumMilliseconds;
+  #attempts = 0;
 
   constructor(options: ScannerOptions) {
     this.#options = options;
-
-    for (const canvas of [this.#frozen, this.#mosaic]) {
-      canvas.width = analysisSize;
-      canvas.height = analysisSize;
-    }
-
-    this.#frozen.setAttribute("aria-label", "Captured identicon reconstruction");
+    this.#frozen.width = analysisSize;
+    this.#frozen.height = analysisSize;
+    this.#frozen.setAttribute("aria-label", "Clearest captured identicon frame");
     Object.assign(this.#frozen.style, {
       position: "absolute",
       inset: "0",
@@ -352,7 +362,7 @@ export class Scanner {
     const copy = document.querySelector<HTMLElement>(".scan-copy p");
     if (copy) {
       copy.textContent =
-        "Move normally. Every clear star, colour and approved glyph region is saved. Forty reliable stars are the mathematical minimum. The camera freezes after 56 distinct complete observations, or earlier when recovery succeeds, then finishes processing offline.";
+        "Move normally. Clear stars, colours and approved glyph regions are saved across several comparison frames. The scanner waits for the image to settle and for at least 1.2 seconds of useful capture before it can stop the camera. If reconstruction needs more evidence, it resumes without losing progress.";
     }
 
     this.#close.addEventListener("click", () => this.close());
@@ -361,7 +371,7 @@ export class Scanner {
       const file = this.#file.files?.[0];
       this.#file.value = "";
       if (!file) return;
-      void this.readPhoto(file).catch((error) => this.processingError(error));
+      void this.readPhoto(file).catch((error) => this.photoError(error));
     });
     this.#dialog.addEventListener("cancel", (event) => {
       event.preventDefault();
@@ -392,7 +402,11 @@ export class Scanner {
     this.resetViewport();
     this.#dialog.showModal();
     this.#upload.disabled = false;
-    this.message("Requesting camera access…");
+    await this.acquireCamera(session, "Requesting camera access…");
+  }
+
+  private async acquireCamera(session: number, status: string): Promise<void> {
+    this.message(status);
     await nextPaint();
 
     const devices = navigator.mediaDevices;
@@ -406,7 +420,6 @@ export class Scanner {
     try {
       const vision = loadOpenCv();
       const stream = await requestCamera(devices);
-
       if (session !== this.#session || !this.#dialog.open) {
         stopStream(stream);
         return;
@@ -417,18 +430,19 @@ export class Scanner {
       await startVideo(this.#video);
       await this.configureCamera(stream);
       await vision;
-
       if (session !== this.#session || !this.#dialog.open) {
-        this.stop();
+        this.stopCamera();
         return;
       }
 
-      this.message("Letting focus and exposure settle briefly…");
+      this.message("Letting focus and exposure settle before collecting comparison frames…");
       await pause(focusSettleMilliseconds);
       if (session !== this.#session || !this.#dialog.open) return;
 
       this.message(
-        "Bring the identicon into the guide for one or two clear moments. You do not need to hold still."
+        this.#series.snapshot().frames === 0
+          ? "Bring the identicon into the guide. Move naturally; several clear moments will be compared."
+          : "Saved evidence restored. Bring the identicon back for another clear comparison moment."
       );
       this.scheduleAutomatic(0);
     } catch (error) {
@@ -443,7 +457,6 @@ export class Scanner {
 
     const capabilities = track.getCapabilities() as CameraCapabilities;
     const advanced: Record<string, string>[] = [];
-
     if (capabilities.focusMode?.includes("continuous")) {
       advanced.push({ focusMode: "continuous" });
     }
@@ -480,11 +493,15 @@ export class Scanner {
 
   private resetEvidence(): void {
     this.#series.clear();
+    this.#frames.length = 0;
     this.#bestFrame = undefined;
-    this.#baseMosaicScore = Number.NEGATIVE_INFINITY;
-    this.#centreMosaicScores.fill(Number.NEGATIVE_INFINITY);
-    this.#ringMosaicScores.fill(Number.NEGATIVE_INFINITY);
-    context(this.#mosaic).clearRect(0, 0, this.#mosaic.width, this.#mosaic.height);
+    this.#centreScores.fill(Number.NEGATIVE_INFINITY);
+    this.#ringScores.fill(Number.NEGATIVE_INFINITY);
+    this.#centreFrames.fill(undefined);
+    this.#ringFrames.fill(undefined);
+    this.#retryAfterFrames = captureMinimumFrames;
+    this.#retryAfterMilliseconds = captureMinimumMilliseconds;
+    this.#attempts = 0;
   }
 
   private resetViewport(): void {
@@ -527,7 +544,6 @@ export class Scanner {
     this.#progress.setAttribute("aria-valuenow", String(progress));
     this.#progressFill.style.inlineSize = `${progress}%`;
     this.#progressText.textContent = text;
-    this.message(text);
   }
 
   private hideProgress(): void {
@@ -559,9 +575,10 @@ export class Scanner {
 
       if (!circle) {
         const snapshot = this.#series.snapshot();
-        this.message(snapshot.frames === 0
-          ? "Looking for the outer circle…"
-          : `${progressMessage(snapshot)} · progress saved; bring it back into view.`
+        this.message(
+          snapshot.frames === 0
+            ? "Looking for the outer circle…"
+            : `${progressMessage(snapshot)} · progress saved; bring it back into view.`
         );
         return;
       }
@@ -569,7 +586,8 @@ export class Scanner {
       normaliseCircle(this.#capture, circle, this.#normalised, analysisSize);
       const source = copyCanvas(this.#normalised, analysisSize);
       const observed = observePalette(imageData(source));
-      const frame = chooseAlignment(source, observed, vision);
+      const at = performance.now();
+      const frame = chooseAlignment(source, observed, vision, at);
       const before = this.#series.snapshot();
 
       if (!usable(frame.quality)) {
@@ -578,13 +596,9 @@ export class Scanner {
       }
 
       this.#stage.classList.add("analysing");
-      this.accumulateMosaic(frame);
-      if (!this.#bestFrame || frame.score > this.#bestFrame.score) {
-        this.#bestFrame = frame;
-      }
-
+      this.rememberFrame(frame);
       const snapshot = this.#series.add({
-        at: performance.now(),
+        at,
         stars: frame.stars,
         quality: frame.quality.score,
         centre: frame.quality.centre,
@@ -593,9 +607,9 @@ export class Scanner {
 
       this.message(progressMessage(snapshot));
       if (!this.captureEnough(snapshot)) return;
-      await this.processCaptured(snapshot, frame);
+      await this.processCaptured(snapshot, frame, true);
     } catch (error) {
-      this.processingError(error, true);
+      await this.recoverFromFailure(error);
     } finally {
       this.#busy = false;
       this.scheduleAutomatic();
@@ -607,193 +621,177 @@ export class Scanner {
     snapshot: VisualCaptureSnapshot
   ): string {
     const saved = snapshot.frames > 0
-      ? ` Progress saved: ${snapshot.observedStars}/${seedSlotCount} distinct recovery stars.`
+      ? ` Progress saved: ${snapshot.frames} comparison frames and ${snapshot.observedStars}/${seedSlotCount} distinct stars.`
       : "";
 
     if (quality.sharpness < minimumSharpness) {
-      return `That instant was blurred. Move naturally and let the camera catch the next clear moment.${saved}`;
+      return `That instant was blurred. The next clear moment will be compared with the saved ones.${saved}`;
     }
     if (quality.exposure < minimumExposure) {
-      return `Waiting for a better-exposed moment.${saved}`;
+      return `Waiting for a better-exposed comparison frame.${saved}`;
     }
     if (quality.contrast < minimumContrast) {
       return `Reduce glare or move slightly closer.${saved}`;
     }
-    return `Collecting whichever approved elements are clear in each moment.${saved}`;
+    return `Collecting another clear comparison frame.${saved}`;
+  }
+
+  private rememberFrame(frame: FrameEvidence): void {
+    if (!this.#bestFrame || frame.score > this.#bestFrame.score) {
+      this.#bestFrame = frame;
+    }
+
+    this.#frames.push(frame);
+    this.#frames.sort((left, right) => right.score - left.score);
+    if (this.#frames.length > retainedFrameLimit) this.#frames.length = retainedFrameLimit;
+
+    for (let index = 0; index < centreRegions.length; index += 1) {
+      if (!(frame.quality.centre[index] ?? false)) continue;
+      const score = frame.quality.centreScores[index] ?? 0;
+      if (score <= this.#centreScores[index]!) continue;
+      this.#centreScores[index] = score;
+      this.#centreFrames[index] = frame;
+    }
+
+    for (let index = 0; index < ringRegions.length; index += 1) {
+      if (!(frame.quality.ring[index] ?? false)) continue;
+      const score = frame.quality.ringScores[index] ?? 0;
+      if (score <= this.#ringScores[index]!) continue;
+      this.#ringScores[index] = score;
+      this.#ringFrames[index] = frame;
+    }
   }
 
   private capturedRoles(): ReadonlySet<Role> {
     const found = new Set<Role>();
 
     for (let index = 0; index < centreRegions.length; index += 1) {
-      if (!Number.isFinite(this.#centreMosaicScores[index]!)) continue;
+      if (!this.#centreFrames[index]) continue;
       found.add(roleMap[centreRegions[index]!.role]!);
     }
     for (let index = 0; index < ringRegions.length; index += 1) {
-      if (!Number.isFinite(this.#ringMosaicScores[index]!)) continue;
+      if (!this.#ringFrames[index]) continue;
       found.add(roleMap[ringRegions[index]!.role]!);
     }
     return found;
   }
 
   private captureEnough(snapshot: VisualCaptureSnapshot): boolean {
+    if (snapshot.frames < this.#retryAfterFrames) return false;
+    if (snapshot.usefulMilliseconds < this.#retryAfterMilliseconds) return false;
+
     return captureReady({
       observedStars: snapshot.observedStars,
       centreFound: snapshot.centreFound,
       ringFound: snapshot.ringFound,
       hasReading: Boolean(snapshot.reading),
-      capturedRoles: this.capturedRoles().size
+      capturedRoles: this.capturedRoles().size,
+      frames: snapshot.frames,
+      usefulMilliseconds: snapshot.usefulMilliseconds
     });
   }
 
-  private accumulateMosaic(frame: FrameEvidence): void {
-    const target = context(this.#mosaic);
-    const scale = this.#mosaic.width / layoutCanvas;
+  private evidenceSources(
+    snapshot: VisualCaptureSnapshot,
+    current: FrameEvidence
+  ): readonly (readonly ByteObservation[])[] {
+    const sources: Array<readonly ByteObservation[]> = [snapshot.stars];
+    const seen = new Set<HTMLCanvasElement>();
 
-    const copyRegion = (
-      source: HTMLCanvasElement,
-      x: number,
-      y: number,
-      size: number
-    ): void => {
-      const padding = size * 0.32;
-      const sourceX = Math.max(0, (x - size / 2 - padding) * scale);
-      const sourceY = Math.max(0, (y - size / 2 - padding) * scale);
-      const sourceSize = Math.min(
-        this.#mosaic.width - sourceX,
-        this.#mosaic.height - sourceY,
-        (size + padding * 2) * scale
-      );
-
-      target.drawImage(
-        source,
-        sourceX,
-        sourceY,
-        sourceSize,
-        sourceSize,
-        sourceX,
-        sourceY,
-        sourceSize,
-        sourceSize
-      );
-    };
-
-    if (!Number.isFinite(this.#baseMosaicScore)) {
-      this.#baseMosaicScore = frame.quality.score;
-      target.drawImage(frame.canvas, 0, 0);
+    for (const frame of [current, this.#bestFrame, ...this.#frames]) {
+      if (!frame || seen.has(frame.canvas)) continue;
+      seen.add(frame.canvas);
+      sources.push(frame.stars);
     }
 
-    for (let index = 0; index < centreRegions.length; index += 1) {
-      if (!(frame.quality.centre[index] ?? false)) continue;
-      const score = frame.quality.centreScores[index] ?? 0;
-      if (score <= this.#centreMosaicScores[index]!) continue;
-      this.#centreMosaicScores[index] = score;
-      const region = centreRegions[index]!;
-      copyRegion(frame.canvas, region.x, region.y, region.size);
+    return sources;
+  }
+
+  private verificationFrames(current: FrameEvidence): readonly FrameEvidence[] {
+    const candidates = [
+      this.#bestFrame,
+      current,
+      ...this.#centreFrames,
+      ...this.#ringFrames,
+      ...this.#frames
+    ];
+    const seen = new Set<HTMLCanvasElement>();
+    const selected: FrameEvidence[] = [];
+
+    for (const frame of candidates) {
+      if (!frame || seen.has(frame.canvas)) continue;
+      seen.add(frame.canvas);
+      selected.push(frame);
     }
 
-    for (let index = 0; index < ringRegions.length; index += 1) {
-      if (!(frame.quality.ring[index] ?? false)) continue;
-      const score = frame.quality.ringScores[index] ?? 0;
-      if (score <= this.#ringMosaicScores[index]!) continue;
-      this.#ringMosaicScores[index] = score;
-      const region = ringRegions[index]!;
-      copyRegion(frame.canvas, region.x, region.y, region.size * 1.35);
-    }
+    return selected.slice(0, retainedFrameLimit);
   }
 
   private async processCaptured(
     snapshot: VisualCaptureSnapshot,
-    current: FrameEvidence
+    current: FrameEvidence,
+    cameraCapture: boolean
   ): Promise<void> {
     if (this.#processing) return;
     this.#processing = true;
     this.#upload.disabled = true;
     const session = this.#session;
+    const display = this.#bestFrame ?? current;
 
-    this.freeze(this.#mosaic);
-    this.showProgress(8, "Capture complete. Camera stopped. You no longer need to hold it up.");
+    this.freeze(display.canvas);
+    this.message("Capture complete. Processing several saved comparison frames…");
+    this.showProgress(8, "Camera stopped. You no longer need to hold it up.");
     await nextPaint();
-    await pause(70);
+    await pause(180);
     if (session !== this.#session) return;
 
     this.showProgress(
-      20,
-      `Resolving ${snapshot.observedStars} distinct stars from the captured evidence…`
+      22,
+      `Comparing ${snapshot.frames} usable frames and ${snapshot.observedStars} distinct stars…`
     );
     await nextPaint();
 
-    const evidence: Array<readonly ByteObservation[]> = [
-      current.stars
-    ];
-    if (this.#bestFrame && this.#bestFrame.canvas !== current.canvas) {
-      evidence.push(this.#bestFrame.stars);
-    }
-    evidence.push(snapshot.stars);
-    evidence.push(observeStarParity(imageData(this.#mosaic), current.palette));
-
-    const reading = snapshot.reading ?? recoverCaptured(evidence);
+    const reading = snapshot.reading ?? recoverCaptured(
+      this.evidenceSources(snapshot, current)
+    );
     if (!reading) {
-      throw new Error(
-        `Capture stopped correctly with ${snapshot.observedStars} distinct complete stars, but offline reconstruction could not resolve a consistent record. The evidence is frozen; this is a decoder failure, not a request to hold the camera longer.`
+      if (!cameraCapture) {
+        throw new Error("The selected photo does not contain a consistent recoverable record")
+      }
+      await this.retryCapture(
+        snapshot,
+        "The saved comparison frames did not yet agree on one record."
       );
+      return;
     }
 
     const value = reading.value;
     const paletteIndex = seedPaletteIndex(value);
-
-    this.showProgress(34, `Reconstructing the complete record from ${reading.observedStars} reliable stars…`);
+    this.showProgress(
+      42,
+      `Reed–Solomon resolved the record and restored ${reading.reconstructedStars} missing or discarded symbols…`
+    );
     await nextPaint();
-    await pause(40);
-
-    this.showProgress(50, `Reed–Solomon restored ${reading.reconstructedStars} missing or discarded star symbols…`);
-    await nextPaint();
-    await pause(40);
-
-    this.showProgress(58, "Checking the recovered identity against the captured colour palette…");
-    await nextPaint();
-    const aligned = alignPaletteToIndex(current.palette, paletteIndex);
-
-    const sources: Array<{
-      canvas: HTMLCanvasElement;
-      palette: ObservedPalette;
-      label: string;
-    }> = [{
-      canvas: this.#mosaic,
-      palette: aligned,
-      label: "cumulative reconstruction"
-    }];
-
-    if (this.#bestFrame && this.#bestFrame.canvas !== current.canvas) {
-      sources.push({
-        canvas: this.#bestFrame.canvas,
-        palette: alignPaletteToIndex(this.#bestFrame.palette, paletteIndex),
-        label: "clearest captured moment"
-      });
-    }
-    sources.push({
-      canvas: current.canvas,
-      palette: aligned,
-      label: "final captured moment"
-    });
+    await pause(60);
 
     const roleFound = emptyRoleMap();
     let constellationFound = false;
     let centreFound = 0;
     let ringFound = 0;
+    const frames = this.verificationFrames(current);
 
-    for (let index = 0; index < sources.length; index += 1) {
-      const source = sources[index]!;
-      const progress = 64 + (index / Math.max(1, sources.length)) * 24;
+    for (let index = 0; index < frames.length; index += 1) {
+      const frame = frames[index]!;
+      const progress = 52 + (index / Math.max(1, frames.length)) * 36;
       this.showProgress(
         progress,
-        `Verifying the approved glyphs and constellation from the ${source.label}…`
+        `Checking approved glyphs and constellation across comparison frame ${index + 1}/${frames.length}…`
       );
       await nextPaint();
 
       const verification = await verifyExpectedSigns(
-        imageData(source.canvas),
-        source.palette,
+        imageData(frame.canvas),
+        alignPaletteToIndex(frame.palette, paletteIndex),
         value
       );
       this.mergeVerification(
@@ -815,19 +813,24 @@ export class Scanner {
     );
 
     if (!verified) {
-      throw new Error(
-        `The star record reconstructed correctly, but visual verification only confirmed ${rolesFound}/6 sign roles, ${centreFound}/9 centre regions and ${ringFound}/12 ring regions`
+      if (!cameraCapture) {
+        throw new Error(
+          `The record recovered, but the photo confirmed only ${rolesFound}/6 sign roles, ${centreFound}/9 centre regions and ${ringFound}/12 ring regions`
+        );
+      }
+      await this.retryCapture(
+        snapshot,
+        `The record recovered, but visual comparison confirmed only ${rolesFound}/6 sign roles, ${centreFound}/9 centre regions and ${ringFound}/12 ring regions.`
       );
+      return;
     }
 
-    this.showProgress(94, "Final consistency check across stars, palette, constellation, grid and ring…");
+    this.showProgress(96, "Final consistency check across parity, palette and approved glyphs…");
     await nextPaint();
-    await pause(60);
+    await pause(80);
     if (session !== this.#session) return;
 
     this.showProgress(100, "Processing complete. Applying the exact identity and signs…");
-    await nextPaint();
-
     this.#options.apply({
       ...value,
       paletteIndex,
@@ -841,6 +844,35 @@ export class Scanner {
 
     await pause(220);
     if (session === this.#session) this.close();
+  }
+
+  private async retryCapture(
+    snapshot: VisualCaptureSnapshot,
+    reason: string
+  ): Promise<void> {
+    this.#attempts += 1;
+    this.#retryAfterFrames = snapshot.frames + retryAdditionalFrames;
+    this.#retryAfterMilliseconds =
+      snapshot.usefulMilliseconds + retryAdditionalMilliseconds;
+    this.showProgress(
+      100,
+      `${reason} All evidence is preserved. Restarting the camera for a few more comparison frames.`
+    );
+    this.message(`Processing attempt ${this.#attempts} needs another clear comparison moment; progress is preserved.`);
+    await pause(500);
+
+    if (!this.#dialog.open) return;
+    this.#processing = false;
+    this.#upload.disabled = false;
+    this.#stage.classList.remove("captured", "analysing");
+    this.#frozen.style.display = "none";
+    this.#video.style.display = "";
+    this.#guide.style.display = "";
+    this.hideProgress();
+    await this.acquireCamera(
+      this.#session,
+      "Restarting the camera with all previous evidence preserved…"
+    );
   }
 
   private mergeVerification(
@@ -870,53 +902,58 @@ export class Scanner {
       normaliseCircle(this.#capture, circle, this.#normalised, analysisSize);
       const source = copyCanvas(this.#normalised, analysisSize);
       const observed = observePalette(imageData(source));
-      const frame = chooseAlignment(source, observed, vision);
+      const at = performance.now();
+      const frame = chooseAlignment(source, observed, vision, at);
 
       if (!usable(frame.quality)) {
         throw new Error("The selected photo is too blurred, clipped or incomplete to reconstruct safely");
       }
 
-      this.accumulateMosaic(frame);
-      this.#bestFrame = frame;
+      this.rememberFrame(frame);
       const snapshot = this.#series.add({
-        at: performance.now(),
+        at,
         stars: frame.stars,
         quality: frame.quality.score,
         centre: frame.quality.centre,
         ring: frame.quality.ring
       });
-
-      await this.processCaptured(snapshot, frame);
+      await this.processCaptured(snapshot, frame, false);
     } finally {
       this.#busy = false;
       if (!this.#processing) this.#upload.disabled = false;
     }
   }
 
+  private async recoverFromFailure(error: unknown): Promise<void> {
+    const value = error instanceof Error ? error.message : String(error);
+    const snapshot = this.#series.snapshot();
+
+    if (this.#processing && this.#dialog.open) {
+      await this.retryCapture(snapshot, `Processing was interrupted: ${value}`);
+      return;
+    }
+
+    this.message(
+      snapshot.frames > 0
+        ? `${progressMessage(snapshot)} · progress saved. ${value}`
+        : `Still looking: ${value}`
+    );
+  }
+
   private cameraError(error: unknown): void {
     this.stopCamera();
+    this.#processing = false;
     this.message(cameraErrorMessage(error), "error");
     this.#upload.disabled = false;
   }
 
-  private processingError(error: unknown, recoverable = false): void {
+  private photoError(error: unknown): void {
     const value = error instanceof Error ? error.message : String(error);
-
-    if (recoverable && this.#stream && this.#dialog.open && !this.#processing) {
-      const snapshot = this.#series.snapshot();
-      this.message(
-        snapshot.frames > 0
-          ? `${progressMessage(snapshot)} · progress saved. ${value}`
-          : `Still looking: ${value}`
-      );
-      return;
-    }
-
     this.stopCamera();
     this.#processing = false;
     this.showProgress(100, value);
     this.#progressText.style.color = "#ff9eaa";
-    this.message(value, "error");
+    this.message("That photo could not be reconstructed. Choose another photo or reopen the camera.", "error");
     this.#upload.disabled = false;
   }
 
