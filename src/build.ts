@@ -8,6 +8,13 @@ import {
   innerClipRadius
 } from "./code-layout.ts";
 import {
+  glyphCarrierDigits,
+  glyphCarriers,
+  glyphMark,
+  glyphMarkHaloStroke,
+  glyphMarkStroke
+} from "./glyph-code.ts";
+import {
   canvas,
   centre,
   innerRingRadius,
@@ -17,14 +24,13 @@ import {
   ringStroke
 } from "./layout.ts";
 import { palette } from "./palette.ts";
+import { hash32, seedDataByteCount, seedPaletteIndex, seedSlotCount } from "./seed.ts";
 import {
-  hash32,
-  seedDataByteCount,
-  seedPaletteIndex,
-  seedParityByteCount,
-  seedSymbols,
-  seedSlotCount
-} from "./seed.ts";
+  starParityCodeword,
+  starParityDataByteCount,
+  starParityExpansionByteCount,
+  starVisualSymbol
+} from "./star-parity.ts";
 import { label, type Sign } from "./sign.ts";
 import type { AssetSource, IdenticonInput } from "./types.ts";
 import { escapeXml, monochrome, outlined, parseSvg, scopeIds } from "./xml.ts";
@@ -34,10 +40,8 @@ const layer0Radius = innerClipRadius - layer0Inset;
 const layer0Size = layer0Radius * 2;
 const layer0X = centre - layer0Radius;
 const layer0Y = centre - layer0Radius;
-const coreReferenceOpacity = 0.12;
-const codeStarSize = 10;
-const codeStarHaloRadius = 7;
-const codeStarOpacity = 1;
+const coreReferenceOpacity = 0.28;
+const codeStarHaloPadding = 4;
 
 function nestedSvg(
   body: string,
@@ -105,35 +109,39 @@ function registrationStars(
     .join("\n");
 }
 
-function codedStars(
+function parityStars(
   value: IdenticonInput,
   asset: ReturnType<typeof parseSvg>,
   colour: string,
   background: string
 ): string {
+  const codeword = starParityCodeword(value);
   const result: string[] = [];
 
-  for (const symbol of seedSymbols(value)) {
-    const { x, y } = codeSymbolPoint(symbol.slot, symbol.value);
-    const style = hash32(`astrological-identicon/complete-payload/v5:${symbol.slot}`);
+  for (let slot = 0; slot < codeword.length; slot += 1) {
+    const symbol = starVisualSymbol(codeword[slot]!);
+    const { x, y } = codeSymbolPoint(slot, symbol.position);
+    const style = hash32(`astrological-identicon/parity-star/v6:${slot}`);
     const rotation = (style >>> 16) % 360;
-    const body = starBody(asset, colour, `star-${symbol.slot}`);
-    const halo = `<circle cx="${x}" cy="${y}" r="${codeStarHaloRadius}" fill="${background}" opacity="0.92"/>`;
+    const body = starBody(asset, colour, `parity-star-${slot}`);
+    const haloRadius = symbol.size / 2 + codeStarHaloPadding;
+    const halo = `<circle cx="${x}" cy="${y}" r="${haloRadius}" fill="${background}" opacity="0.94"/>`;
 
     result.push(
       `<g
-        data-code-slot="${symbol.slot}"
+        data-code-slot="${slot}"
         data-code-byte="${symbol.byte}"
-        data-code-nibble="${symbol.half}"
-        data-code-value="${symbol.value.toString(16).toUpperCase()}"
-        data-code-parity="${symbol.parity}"
-        opacity="${codeStarOpacity}"
+        data-code-position="${symbol.position.toString(16).toUpperCase()}"
+        data-code-size-level="${symbol.sizeLevel}"
+        data-code-opacity-level="${symbol.opacityLevel}"
+        data-code-role="parity-disambiguator"
+        opacity="${symbol.opacity}"
       >${halo}${placedSvg(
         body,
         asset.viewBox,
         x,
         y,
-        codeStarSize,
+        symbol.size,
         "",
         rotation
       )}</g>`
@@ -141,6 +149,45 @@ function codedStars(
   }
 
   return result.join("\n");
+}
+
+function glyphData(value: IdenticonInput, colour: string, background: string): string {
+  return glyphCarriers(value).map((carrier) => {
+    const digits = glyphCarrierDigits(value, carrier);
+    const marks = digits.map((digit, index) => {
+      const actual = glyphMark(carrier, index, digit);
+      const maximum = glyphMark(carrier, index, 3);
+
+      return `<g data-glyph-mark="${index}" data-glyph-digit="${digit}">
+        <line
+          x1="${maximum.startX}"
+          y1="${maximum.startY}"
+          x2="${maximum.endX}"
+          y2="${maximum.endY}"
+          stroke="${background}"
+          stroke-width="${glyphMarkHaloStroke}"
+          stroke-linecap="round"
+        />
+        <line
+          x1="${actual.startX}"
+          y1="${actual.startY}"
+          x2="${actual.endX}"
+          y2="${actual.endY}"
+          stroke="${colour}"
+          stroke-width="${glyphMarkStroke}"
+          stroke-linecap="round"
+        />
+      </g>`;
+    }).join("\n");
+
+    return `<g
+      data-glyph-carrier="${carrier.index}"
+      data-carrier-key="${carrier.key}"
+      data-carrier-group="${carrier.group}"
+      data-byte-offset="${carrier.byteOffset}"
+      data-code-role="systematic-payload-data"
+    >${marks}</g>`;
+  }).join("\n");
 }
 
 export async function buildIdenticon(value: IdenticonInput, assets: AssetSource): Promise<string> {
@@ -157,9 +204,14 @@ export async function buildIdenticon(value: IdenticonInput, assets: AssetSource)
   const starSource = await assets.star();
   const starAsset = parseSvg(starSource);
   const anchorLayer = registrationStars(starAsset, colours.layer0.reduced);
-  const codeLayer = codedStars(
+  const parityLayer = parityStars(
     value,
     starAsset,
+    colours.layer1.reduced,
+    colours.background.reduced
+  );
+  const glyphDataLayer = glyphData(
+    value,
     colours.layer1.reduced,
     colours.background.reduced
   );
@@ -225,9 +277,9 @@ export async function buildIdenticon(value: IdenticonInput, assets: AssetSource)
   const data = escapeXml(JSON.stringify(value));
 
   return `<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="${canvas}" height="${canvas}" viewBox="0 0 ${canvas} ${canvas}" role="img" aria-label="${escapeXml(title)}" data-input="${data}" data-palette-index="${paletteIndex}" data-code-version="5">
+<svg xmlns="http://www.w3.org/2000/svg" width="${canvas}" height="${canvas}" viewBox="0 0 ${canvas} ${canvas}" role="img" aria-label="${escapeXml(title)}" data-input="${data}" data-palette-index="${paletteIndex}" data-code-version="6">
   <title>${escapeXml(title)}</title>
-  <metadata>Generated deterministically by astrological-identicon. The exact UTF-8 seed and all six chart signs are stored in the Reed-Solomon-protected star field.</metadata>
+  <metadata>Generated deterministically by astrological-identicon. Glyph carriers contain the systematic payload data. The star field contains expanded Reed-Solomon parity used only to repair and disambiguate incomplete glyph reads.</metadata>
   <defs>
     <clipPath id="inner-clip">
       <circle cx="${centre}" cy="${centre}" r="${innerClipRadius}"/>
@@ -273,21 +325,19 @@ export async function buildIdenticon(value: IdenticonInput, assets: AssetSource)
   </g>
 
   <g
-    id="coded-stars"
-    data-code="reed-solomon-64-40-identicon-v5"
-    data-code-role="complete-identicon-payload"
+    id="parity-stars"
+    data-code="reed-solomon-star-parity-128-24-v6"
+    data-code-role="error-correction-disambiguation"
     data-code-slots="${seedSlotCount}"
-    data-code-data-bytes="${seedDataByteCount}"
-    data-code-parity-bytes="${seedParityByteCount}"
+    data-code-source-bytes="${starParityDataByteCount}"
+    data-code-expansion-bytes="${starParityExpansionByteCount}"
     data-code-tracks="${codeTrackCount}"
     data-code-sectors="${codeSectorCount}"
     data-code-colour="layer1"
-    data-code-symbol-size="${codeStarSize}"
     data-code-symbol-spacing="${codeSymbolSpacing}"
-    data-code-halo-radius="${codeStarHaloRadius}"
     clip-path="url(#inner-clip)"
   >
-    ${codeLayer}
+    ${parityLayer}
   </g>
 
   <g id="ring-system">
@@ -310,6 +360,17 @@ export async function buildIdenticon(value: IdenticonInput, assets: AssetSource)
       stroke-width="${ringStroke}"
     />
     ${ringSigils}
+  </g>
+
+  <g
+    id="glyph-data"
+    data-code="systematic-glyph-payload-40-v6"
+    data-code-role="primary-identicon-data"
+    data-code-data-bytes="${seedDataByteCount}"
+    data-code-carriers="20"
+    data-code-marks-per-carrier="8"
+  >
+    ${glyphDataLayer}
   </g>
 </svg>
 `;
