@@ -132,8 +132,6 @@ function drawStar(
   exposure: number
 ): void {
   const scale = target.width / 1024;
-  // Lens blur and sharpening add a nearly constant apparent radius. This
-  // compresses the four canonical size levels instead of scaling them linearly.
   const size = canonicalSize * scale * 0.78 + 2.2;
   const radius = size / 2;
 
@@ -237,5 +235,15 @@ describe("phone-relative parity calibration", () => {
 
     expect(capture.rendered).toBe(81);
     expectRecovery(capture.observations, 56);
+  });
+
+  test("counts one physical star only once when slot windows overlap", () => {
+    const capture = renderedField((slot) => slot === 63);
+    const located = capture.observations.filter((value) => {
+      return value.position !== null;
+    }).length;
+
+    expect(capture.rendered).toBe(1);
+    expect(located).toBe(1);
   });
 });
