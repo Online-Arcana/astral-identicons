@@ -42,6 +42,18 @@ interface StarCalibration {
   readonly confidence: number;
 }
 
+interface RawStarObservation {
+  readonly position: PositionObservation;
+  readonly profile: StarProfile | undefined;
+  readonly normalisedSize: number | null;
+  readonly normalisedOpacity: number | null;
+}
+
+interface LevelObservation {
+  readonly value: number | null;
+  readonly confidence: number;
+}
+
 function clamp(value: number, minimum: number, maximum: number): number {
   return Math.max(minimum, Math.min(maximum, value));
 }
@@ -142,7 +154,11 @@ function starProfile(
   let seed = radius * side + radius;
   let peak = 0;
 
-  for (let row = Math.max(0, radius - 2); row <= Math.min(side - 1, radius + 2); row += 1) {
+  for (
+    let row = Math.max(0, radius - 2);
+    row <= Math.min(side - 1, radius + 2);
+    row += 1
+  ) {
     for (
       let column = Math.max(0, radius - 2);
       column <= Math.min(side - 1, radius + 2);
@@ -249,11 +265,11 @@ function northCalibration(
   };
 }
 
-function orderedLevel(
+function fixedLevel(
   measured: number,
   levels: readonly number[],
   maximumCost: number
-): { value: number | null; confidence: number } {
+): LevelObservation {
   let best: RankedValue = { value: 0, score: Number.POSITIVE_INFINITY };
   let second: RankedValue = { value: 0, score: Number.POSITIVE_INFINITY };
 
@@ -280,23 +296,107 @@ function orderedLevel(
   return { value: best.value, confidence };
 }
 
-function observeStar(
+function quantile(values: readonly number[], fraction: number): number {
+  if (values.length === 0) return 0;
+  const position = clamp(fraction, 0, 1) * (values.length - 1);
+  const lower = Math.floor(position);
+  const upper = Math.ceil(position);
+  const amount = position - lower;
+  const first = values[lower]!;
+  const second = values[upper]!;
+  return first + (second - first) * amount;
+}
+
+function populationCentres(
+  measurements: readonly (number | null)[],
+  fallback: readonly number[]
+): readonly number[] {
+  const values = measurements
+    .filter((value): value is number => value !== null && Number.isFinite(value))
+    .sort((left, right) => left - right);
+
+  if (values.length < 16) return fallback;
+
+  let centres = [0.125, 0.375, 0.625, 0.875].map((fraction) => {
+    return quantile(values, fraction);
+  });
+
+  for (let iteration = 0; iteration < 12; iteration += 1) {
+    const groups: number[][] = [[], [], [], []];
+
+    for (const measured of values) {
+      let nearest = 0;
+      let distance = Number.POSITIVE_INFINITY;
+
+      for (let level = 0; level < centres.length; level += 1) {
+        const candidate = Math.abs(measured - centres[level]!);
+        if (candidate >= distance) continue;
+        nearest = level;
+        distance = candidate;
+      }
+
+      groups[nearest]!.push(measured);
+    }
+
+    centres = centres.map((centre, level) => {
+      const group = groups[level]!;
+      if (group.length === 0) return centre;
+      return group.reduce((sum, value) => sum + value, 0) / group.length;
+    });
+    centres.sort((left, right) => left - right);
+  }
+
+  return centres;
+}
+
+function populationLevel(
+  measured: number | null,
+  centres: readonly number[]
+): LevelObservation {
+  if (measured === null || !Number.isFinite(measured)) {
+    return { value: null, confidence: 0 };
+  }
+
+  const ranked = centres
+    .map((centre, value) => ({
+      value,
+      score: Math.abs(measured - centre)
+    }))
+    .sort((left, right) => left.score - right.score);
+  const best = ranked[0]!;
+  const second = ranked[1]!;
+  const leftGap = best.value === 0
+    ? centres[1]! - centres[0]!
+    : centres[best.value]! - centres[best.value - 1]!;
+  const rightGap = best.value === centres.length - 1
+    ? centres[centres.length - 1]! - centres[centres.length - 2]!
+    : centres[best.value + 1]! - centres[best.value]!;
+  const localGap = Math.max(0.001, Math.min(leftGap, rightGap));
+  const confidence = clamp(
+    (second.score - best.score) / localGap,
+    0,
+    1
+  );
+
+  return {
+    value: best.value,
+    confidence
+  };
+}
+
+function rawObservation(
   image: ImageData,
   palette: ObservedPalette,
   calibration: StarCalibration,
   slot: number
-): StarComponentObservation {
+): RawStarObservation {
   const position = positionObservation(image, palette, slot);
   if (position.value === null || !position.point) {
     return {
-      value: null,
-      confidence: position.confidence,
-      position: null,
-      sizeLevel: null,
-      opacityLevel: null,
-      positionConfidence: position.confidence,
-      sizeConfidence: 0,
-      opacityConfidence: 0
+      position,
+      profile: undefined,
+      normalisedSize: null,
+      normalisedOpacity: null
     };
   }
 
@@ -306,16 +406,38 @@ function observeStar(
     position.point,
     palette.layer1
   );
-  const normalisedSize = profile.size / calibration.sizeScale;
-  const normalisedOpacity = profile.opacity / calibration.opacityScale;
-  const size = orderedLevel(normalisedSize, starSizes, 4.5);
-  const opacity = orderedLevel(normalisedOpacity, starOpacities, 0.085);
-  const profileConfidence = Math.min(profile.confidence, calibration.confidence);
+  if (profile.size <= 0 || profile.opacity <= 0) {
+    return {
+      position,
+      profile,
+      normalisedSize: null,
+      normalisedOpacity: null
+    };
+  }
+
+  return {
+    position,
+    profile,
+    normalisedSize: profile.size / calibration.sizeScale,
+    normalisedOpacity: profile.opacity / calibration.opacityScale
+  };
+}
+
+function assembleObservation(
+  raw: RawStarObservation,
+  size: LevelObservation,
+  opacity: LevelObservation,
+  calibration: StarCalibration
+): StarComponentObservation {
+  const profileConfidence = Math.min(
+    raw.profile?.confidence ?? 0,
+    calibration.confidence
+  );
   const components = {
-    position: position.value,
+    position: raw.position.value,
     sizeLevel: size.value,
     opacityLevel: opacity.value,
-    positionConfidence: position.confidence,
+    positionConfidence: raw.position.confidence,
     sizeConfidence: size.confidence * profileConfidence,
     opacityConfidence: opacity.confidence * profileConfidence
   };
@@ -337,7 +459,16 @@ export function observeStarParitySlot(
     throw new Error(`star slot must be between 0 and ${seedSlotCount - 1}`);
   }
 
-  return observeStar(image, palette, northCalibration(image, palette), slot);
+  const calibration = northCalibration(image, palette);
+  const raw = rawObservation(image, palette, calibration, slot);
+  const size = raw.normalisedSize === null
+    ? { value: null, confidence: 0 }
+    : fixedLevel(raw.normalisedSize, starSizes, 4.5);
+  const opacity = raw.normalisedOpacity === null
+    ? { value: null, confidence: 0 }
+    : fixedLevel(raw.normalisedOpacity, starOpacities, 0.085);
+
+  return assembleObservation(raw, size, opacity, calibration);
 }
 
 export function observeStarParity(
@@ -345,8 +476,24 @@ export function observeStarParity(
   palette: ObservedPalette
 ): readonly StarComponentObservation[] {
   const calibration = northCalibration(image, palette);
+  const raw = Array.from({ length: seedSlotCount }, (_unused, slot) => {
+    return rawObservation(image, palette, calibration, slot);
+  });
+  const sizeCentres = populationCentres(
+    raw.map((value) => value.normalisedSize),
+    starSizes
+  );
+  const opacityCentres = populationCentres(
+    raw.map((value) => value.normalisedOpacity),
+    starOpacities
+  );
 
-  return Array.from({ length: seedSlotCount }, (_unused, slot) => {
-    return observeStar(image, palette, calibration, slot);
+  return raw.map((value) => {
+    return assembleObservation(
+      value,
+      populationLevel(value.normalisedSize, sizeCentres),
+      populationLevel(value.normalisedOpacity, opacityCentres),
+      calibration
+    );
   });
 }
