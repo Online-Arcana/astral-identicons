@@ -1,6 +1,6 @@
 # Astral Identicon visual contract v9
 
-V9 separates literal astrology, exact identity encoding, error correction and decoration.
+V9 separates literal astrology, exact identity encoding, error correction, calibration and decoration.
 
 ## Record
 
@@ -16,7 +16,13 @@ A v9-scannable identicon represents an exact 32-byte identity and six literal zo
 | 2 | CRC-16 |
 | 40 | Total systematic record |
 
-The record is protected with RS(72,40), producing 32 parity bytes.
+The record is protected with RS(168,40), producing 128 parity bytes. It can recover any mixture satisfying:
+
+```text
+2e + s <= 128
+```
+
+where `e` is the number of wrong bytes and `s` is the number of missing bytes.
 
 Short text seeds remain supported by the legacy renderer. They are not labelled v9-scannable.
 
@@ -32,11 +38,39 @@ Repeated signs provide recognition evidence and can be repaired through the cano
 
 ## Calibration
 
-The North Star remains the fixed upright orientation and scale reference. It uses the same foreground colour as the parity stars, but its state is fixed and it encodes nothing.
+### Circumference stars
 
-The central Sun `☉` is fixed and encodes no data. It uses the same visual scale as the planetary glyphs. Twelve short fixed rays mark the twelve 30-degree rotation levels.
+Twelve fixed calibration stars sit outside the outer zodiac ring, one every 30 degrees. They encode no payload and cannot collide with the 128 parity stars.
 
-The Sun contains no nested zodiac glyph, background knockout or other overlay. The literal solar sign remains represented by the constellation, fixed grid and zodiac ring.
+Clockwise from North, the stars use the following known level pattern for both size and fading:
+
+```text
+6, 1, 5, 2, 4, 3, 6, 3, 4, 2, 5, 1
+```
+
+North and South are both level 6. Every level occurs twice. The scanner uses these known positions and values to:
+
+- resolve orientation;
+- measure all six apparent star sizes;
+- measure all six captured fading levels;
+- calibrate the parity-star decoder;
+- derive all six planetary-glyph sizes because every planetary level is exactly twice its corresponding star level.
+
+The star sizes are `13`, `15`, `17`, `19`, `21` and `23` SVG units. Planetary glyph sizes are therefore `26`, `30`, `34`, `38`, `42` and `46`.
+
+### Solar rays
+
+The central Sun `☉` is fixed and encodes no data. It uses the largest planetary-glyph size.
+
+Its twelve short rays calibrate fading only. They do not calibrate or encode size. Clockwise from North, their fixed fading pattern is:
+
+```text
+6, 1, 5, 2, 4, 3, 4, 3, 5, 2, 1, 6
+```
+
+The scanner combines the known ray intensities with the circumference-star intensities to estimate the captured six-level fading curve.
+
+The Sun contains no nested zodiac glyph, background knockout or other overlay. The original literal solar sign remains in the fixed centre grid.
 
 No orientation notches, carriers, background badges or extra marker glyphs are added.
 
@@ -66,8 +100,6 @@ Each appears exactly once and carries:
 
 Stroke thickness is fixed. It never carries data and the renderer does not outline or distort the glyphs.
 
-The six planetary sizes are `26`, `30`, `34`, `38`, `42` and `46` SVG units, exactly twice the previous deployed values.
-
 The satellite state count is `P(6,3) = 120`.
 
 The location channel is the full ordered selection:
@@ -84,15 +116,15 @@ The decoder retains ranked alternatives for each glyph and does not commit to on
 
 Colour is deterministic decoration only. It is never used to reconstruct or validate data.
 
-All eleven planetary glyphs, all thirty-three satellites and the fixed central Sun use one foreground colour. The thirty-two parity stars and fixed North Star use the other foreground colour. The decoder ignores that separation and remains compatible with greyscale, monochrome and recoloured copies.
+All eleven planetary glyphs, all thirty-three satellites, the fixed central Sun and its rays use one foreground colour. The 128 parity stars and twelve fixed circumference calibration stars use the other foreground colour. The decoder ignores that separation and remains compatible with greyscale, monochrome and recoloured copies.
 
 ## Parity stars
 
-V9 renders thirty-two indexed parity stars plus the fixed North Star.
+V9 renders 128 indexed payload parity stars. The twelve circumference stars are calibration references and are not part of the Reed–Solomon codeword.
 
 Every parity symbol is one clean eight-point star. The decorative multi-shape `star.svg` artwork is not used as a parity symbol.
 
-Each parity group has eight local placements. A star carries one parity byte through:
+Each indexed parity group has eight local placements. A star carries one parity byte through:
 
 - eight placements;
 - six sizes;
@@ -100,9 +132,17 @@ Each parity group has eight local placements. A star carries one parity byte thr
 
 Stroke thickness and shape deformation never carry data.
 
-This gives 288 states. Exactly 256 map to byte values and 32 are reserved. One unreadable star is one Reed–Solomon erasure; indices never shift.
+This gives 288 visual states. Exactly 256 map to byte values and 32 are reserved. One unreadable star is one Reed–Solomon erasure; indices never shift.
 
-The planetary map and literal signs are systematic data. The scanner never waits for every parity star.
+The planetary map and literal signs provide the systematic 40-byte record. The scanner does not need to read every parity star.
+
+## Camera capture
+
+The camera scanner must not accept the first recognisable frame.
+
+It keeps the camera open long enough for autofocus, exposure and white balance to settle, rejects frames below the strict blur and exposure thresholds, requires several consecutive stable frames, and continually replaces its retained snapshot whenever a sharper overall frame is captured.
+
+Cumulative evidence remains available across retries, but a blurry frame never displaces a clearer retained frame.
 
 ## Runtime versions
 

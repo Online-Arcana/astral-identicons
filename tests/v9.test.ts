@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { buildIdenticon, visualFormatVersion } from "../src/build.ts";
 import {
+  v9RayFadingLevels,
+  v9StarCalibrationLevels
+} from "../src/calibration-v9.ts";
+import {
+  calibrationStar,
   parityAnchorPoint,
   planetAnchorPoint,
   sunRay
@@ -22,6 +27,7 @@ import {
 import {
   v9ParityByte,
   v9ParityReservedStateCount,
+  v9ParityStarCount,
   v9ParityVisualState
 } from "../src/parity-v9.ts";
 import {
@@ -202,32 +208,34 @@ describe("v9 planetary identity codec", () => {
 });
 
 describe("v9 canonical record and parity stars", () => {
-  test("builds an exact 40-byte source and RS(72,40) codeword", () => {
+  test("builds an exact 40-byte source and RS(168,40) codeword", () => {
     expect(v9Record(sample).length).toBe(40);
-    expect(v9Codeword(sample).length).toBe(72);
+    expect(v9Codeword(sample).length).toBe(168);
     expect(v9DataByteCount).toBe(40);
-    expect(v9ParityByteCount).toBe(32);
+    expect(v9ParityByteCount).toBe(128);
+    expect(v9ParityStarCount).toBe(128);
     expect(decodeV9Codeword(v9Codeword(sample))).toEqual(sample);
   });
 
-  test("recovers a boundary mixture satisfying 2e+s=32", () => {
+  test("recovers a boundary mixture satisfying 2e+s=128", () => {
     const codeword = v9Codeword(sample);
     const data = [...codeword.slice(0, v9DataByteCount)].map((value) => observed(value));
     const parity = [...codeword.slice(v9DataByteCount)].map((value) => observed(value));
     const all = [...data, ...parity];
     const errors = new Set<number>();
 
-    for (let index = 0; index < 8; index += 1) {
-      const position = (index * 7 + 3) % all.length;
+    for (let index = 0; index < 32; index += 1) {
+      const position = (index * 11 + 3) % all.length;
       errors.add(position);
       all[position] = observed((all[position]!.value! + 91) & 0xff, 0.45);
     }
+    expect(errors.size).toBe(32);
 
     const erased = new Set<number>();
     let cursor = 5;
-    while (erased.size < 16) {
+    while (erased.size < 64) {
       if (!errors.has(cursor)) erased.add(cursor);
-      cursor = (cursor + 11) % all.length;
+      cursor = (cursor + 13) % all.length;
     }
     for (const position of erased) all[position] = observed(null);
 
@@ -237,8 +245,8 @@ describe("v9 canonical record and parity stars", () => {
     });
 
     expect(recovered.value).toEqual(sample);
-    expect(recovered.errors).toBe(8);
-    expect(recovered.erasures).toBe(16);
+    expect(recovered.errors).toBe(32);
+    expect(recovered.erasures).toBe(64);
   });
 
   test("maps every byte independently and rejects all 32 reserved star states", () => {
@@ -270,29 +278,41 @@ describe("v9 canonical record and parity stars", () => {
 });
 
 describe("v9 geometry and renderer", () => {
-  test("provides 256 planetary anchors, 256 parity anchors and twelve Sun rays", () => {
+  test("provides 256 planetary anchors, 1024 parity anchors and fixed calibration", () => {
     const planets = new Set<string>();
     const parity = new Set<string>();
+    const references = new Set<string>();
 
     for (let anchor = 0; anchor < planetAnchorCount; anchor += 1) {
       const point = planetAnchorPoint(anchor);
       planets.add(`${point.x.toFixed(6)}:${point.y.toFixed(6)}`);
     }
 
-    for (let parityGroup = 0; parityGroup < 32; parityGroup += 1) {
+    for (let parityGroup = 0; parityGroup < v9ParityStarCount; parityGroup += 1) {
       for (let position = 0; position < 8; position += 1) {
         const point = parityAnchorPoint(parityGroup, position);
         parity.add(`${point.x.toFixed(6)}:${point.y.toFixed(6)}`);
       }
     }
 
-    const rays = new Set(
-      Array.from({ length: 12 }, (_unused, index) => sunRay(index).angle)
-    );
+    const rays = Array.from({ length: 12 }, (_unused, index) => sunRay(index));
+    for (let index = 0; index < 12; index += 1) {
+      const reference = calibrationStar(index);
+      references.add(
+        `${reference.point.x.toFixed(6)}:${reference.point.y.toFixed(6)}`
+      );
+    }
 
     expect(planets.size).toBe(256);
-    expect(parity.size).toBe(256);
-    expect(rays.size).toBe(12);
+    expect(parity.size).toBe(1024);
+    expect(new Set(rays.map((ray) => ray.angle)).size).toBe(12);
+    expect(references.size).toBe(12);
+    expect(rays.map((ray) => ray.level + 1)).toEqual(v9RayFadingLevels);
+    expect(
+      Array.from({ length: 12 }, (_unused, index) => {
+        return calibrationStar(index).level + 1;
+      })
+    ).toEqual(v9StarCalibrationLevels);
   });
 
   test("routes exact identities to v9 and text seeds to legacy v8", () => {
@@ -304,33 +324,29 @@ describe("v9 geometry and renderer", () => {
     const svg = await buildIdenticon(sample, assets);
 
     expect(svg).toContain('data-code-version="9"');
-    expect(svg).toContain('data-code="reed-solomon-72-40-parity-stars-32-v9"');
+    expect(svg).toContain('data-code="reed-solomon-168-40-parity-stars-128-v9"');
     expect(svg).toContain('id="central-sun-reference"');
+    expect(svg).toContain('id="north-star-reference"');
+    expect(svg).toContain('id="south-star-reference"');
     expect(svg).toContain('data-glyph="☉"');
     expect(svg).not.toContain('data-recognition-role="literal-central-solar-sign"');
     expect(svg).not.toContain('data-role="solar-sign-knockout"');
     expect(svg).not.toContain('data-role="central-sun-medallion"');
-    // The literal sign grid retains its original outlined artwork.
-    // Only the planetary and parity payload layers must have fixed,
-    // undeformed shapes without a stroke-thickness channel.
+
     const parityStart = svg.indexOf('<g id="parity-stars-v9"');
     const planetaryStart = svg.indexOf('<g id="planetary-identity-v9"');
-    const calibrationStart = svg.indexOf(
-      '<g clip-path="url(#inner-clip-v9)">',
-      planetaryStart
-    );
+    const ringStart = svg.indexOf('<g id="literal-ring-system"');
 
     expect(parityStart).toBeGreaterThanOrEqual(0);
     expect(planetaryStart).toBeGreaterThan(parityStart);
-    expect(calibrationStart).toBeGreaterThan(planetaryStart);
+    expect(ringStart).toBeGreaterThan(planetaryStart);
 
     const paritySvg = svg.slice(parityStart, planetaryStart);
-    const planetarySvg = svg.slice(planetaryStart, calibrationStart);
+    const planetarySvg = svg.slice(planetaryStart, ringStart);
 
     expect(paritySvg).not.toContain('stroke=');
     expect(planetarySvg).not.toContain('stroke=');
 
-    // Preserve the original solar sign in the centre of the fixed grid.
     expect(count(
       svg,
       /data-role="Sun" data-sign="capricorn" data-orientation="upright"/gu
@@ -339,12 +355,17 @@ describe("v9 geometry and renderer", () => {
     expect(svg).not.toContain('data-parity-density-level=');
     expect(svg).toContain('data-planet-fading-level=');
     expect(svg).toContain('data-parity-fading-level=');
+    expect(svg).toContain('data-calibration-pattern="6,1,5,2,4,3,4,3,5,2,1,6"');
+    expect(svg).toContain('data-calibration-pattern="6,1,5,2,4,3,6,3,4,2,5,1"');
     expect(count(svg, /data-calibration-angle=/gu)).toBe(12);
+    expect(count(svg, /data-calibrates="fading-only"/gu)).toBe(12);
+    expect(count(svg, /data-reference-angle=/gu)).toBe(12);
+    expect(count(svg, /data-calibration-reference="true"/gu)).toBe(12);
     expect(count(svg, /data-planet-index=/gu)).toBe(11);
     expect(count(svg, /data-satellite-size=/gu)).toBe(33);
-    expect(count(svg, /data-parity-index=/gu)).toBe(32);
+    expect(count(svg, /data-parity-index=/gu)).toBe(128);
     expect(count(svg, /data-code-colour="planetary-foreground"/gu)).toBeGreaterThanOrEqual(45);
-    expect(count(svg, /data-code-colour="parity-star-foreground"/gu)).toBe(34);
+    expect(count(svg, /data-code-colour="parity-star-foreground"/gu)).toBeGreaterThanOrEqual(141);
 
     for (const planet of planetaryGlyphs) {
       expect(svg).toContain(`data-planet-glyph="${planet.glyph}"`);

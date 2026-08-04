@@ -38,7 +38,7 @@ export const v9RecordMagic = 0xa5;
 export const v9RecordVersion = 9;
 export const v9IdentityByteCount = 32;
 export const v9DataByteCount = 40;
-export const v9ParityByteCount = 32;
+export const v9ParityByteCount = 128;
 export const v9CodewordByteCount = v9DataByteCount + v9ParityByteCount;
 
 const identityLengthOffset = 2;

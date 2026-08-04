@@ -1,5 +1,5 @@
-import { northStar, northStarPoint } from "./code-layout.ts";
 import {
+  calibrationStar,
   centralSun,
   parityAnchorPoint,
   parityFadingOpacities,
@@ -12,6 +12,11 @@ import {
   sunRay,
   v9InnerClipRadius
 } from "./layout-v9.ts";
+import {
+  v9CalibrationSampleCount,
+  v9RayFadingLevels,
+  v9StarCalibrationLevels
+} from "./calibration-v9.ts";
 import {
   canvas,
   centre,
@@ -99,21 +104,40 @@ function starPoints(
   return points.join(" ");
 }
 
-function northStarLayer(colour: string): string {
-  const point = northStarPoint();
+function calibrationStarsLayer(colour: string): string {
+  const stars = Array.from(
+    { length: v9CalibrationSampleCount },
+    (_unused, index) => {
+      const reference = calibrationStar(index);
+      const name = index === 0
+        ? "north-star-reference"
+        : index === 6
+          ? "south-star-reference"
+          : `calibration-star-reference-${index}`;
+      const position = index === 0
+        ? "north"
+        : index === 6
+          ? "south"
+          : `${reference.angle}-degrees`;
 
-  return `<g id="north-star-reference" data-recognition-role="north-star-reference" data-reference-position="top" data-reference-size="${northStar.size}" data-reference-fading="fixed" data-code-colour="parity-star-foreground">
-    <polygon points="${starPoints(point.x, point.y, northStar.size)}" fill="${colour}" data-calibration-reference="true"/>
+      return `<g id="${name}" data-recognition-role="circumference-size-fading-orientation-reference" data-reference-index="${index}" data-reference-position="${position}" data-reference-angle="${reference.angle}" data-reference-level="${reference.level + 1}" data-reference-size="${reference.size}" data-reference-fading="${reference.opacity}" data-code-colour="parity-star-foreground" opacity="${reference.opacity}">
+        <polygon points="${starPoints(reference.point.x, reference.point.y, reference.size)}" fill="${colour}" data-calibration-reference="true"/>
+      </g>`;
+    }
+  ).join("\n");
+
+  return `<g id="calibration-stars-v9" data-recognition-role="twelve-fixed-star-references" data-size-calibration="true" data-fading-calibration="true" data-calibration-pattern="${v9StarCalibrationLevels.join(",")}">
+    ${stars}
   </g>`;
 }
 
 function sunLayer(sunColour: string): string {
   const rays = Array.from({ length: centralSun.rayCount }, (_unused, index) => {
     const ray = sunRay(index);
-    return `<line x1="${ray.start.x}" y1="${ray.start.y}" x2="${ray.end.x}" y2="${ray.end.y}" stroke="${sunColour}" stroke-width="${centralSun.rayStrokeWidth}" stroke-linecap="round" data-calibration-angle="${ray.angle}"/>`;
+    return `<line x1="${ray.start.x}" y1="${ray.start.y}" x2="${ray.end.x}" y2="${ray.end.y}" stroke="${sunColour}" stroke-width="${centralSun.rayStrokeWidth}" stroke-linecap="round" opacity="${ray.opacity}" data-calibration-angle="${ray.angle}" data-calibration-level="${ray.level + 1}" data-calibrates="fading-only"/>`;
   }).join("\n");
 
-  return `<g id="central-sun-reference" data-recognition-role="centre-size-fading-rotation-reference" data-encodes="nothing" data-rotation="fixed">
+  return `<g id="central-sun-reference" data-recognition-role="centre-fading-rotation-reference" data-size-calibration="false" data-fading-calibration="true" data-calibration-pattern="${v9RayFadingLevels.join(",")}" data-encodes="nothing" data-rotation="fixed">
     ${rays}
     <text x="${centre}" y="${centre}" text-anchor="middle" dominant-baseline="central" font-family="${symbolFont}" font-size="${centralSun.glyphSize}" font-weight="500" fill="${sunColour}" data-glyph="${calibrationSunGlyph}">${calibrationSunGlyph}</text>
   </g>`;
@@ -251,7 +275,7 @@ export async function buildV9Identicon(
   return `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="${canvas}" height="${canvas}" viewBox="0 0 ${canvas} ${canvas}" role="img" aria-label="${escapeXml(title)}" data-input="${escapeXml(JSON.stringify(value))}" data-palette-index="${seedPaletteIndex(value)}" data-code-version="${v9RecordVersion}" data-scannable="v9" data-identity-hex="${identityHex}">
   <title>${escapeXml(title)}</title>
-  <metadata>Astral Identicon visual contract v9. Literal signs remain in the constellation, centre grid and zodiac ring. Eleven planetary glyphs and thirty-three satellites encode the exact 32-byte identity through eleven distinct choices from a balanced field of 256 legal anchors. Planetary glyph channels are placement, fading, size and rotation; stroke thickness never carries data. Every planetary glyph and satellite uses the same foreground colour. Thirty-two indexed clean parity stars and the North Star use the other foreground colour and contain RS(72,40) parity or fixed calibration only. Colour is decorative and is never required for decoding. The North Star establishes upright orientation. The central Sun and twelve fixed rays establish centre, size, fading and thirty-degree rotation calibration.</metadata>
+  <metadata>Astral Identicon visual contract v9. Literal signs remain in the constellation, centre grid and zodiac ring. Eleven planetary glyphs and thirty-three satellites encode the exact 32-byte identity through eleven distinct choices from a balanced field of 256 legal anchors. Planetary glyph channels are placement, fading, size and rotation; stroke thickness never carries data. Every planetary glyph and satellite uses the same foreground colour. One hundred and twenty-eight indexed clean parity stars contain RS(168,40) parity. Twelve fixed circumference stars calibrate orientation, star size and star fading using the clockwise pattern 6,1,5,2,4,3,6,3,4,2,5,1; North and South are both level 6. Planetary glyph size levels are exactly twice the star size levels. Twelve fixed solar rays calibrate fading only using the clockwise pattern 6,1,5,2,4,3,4,3,5,2,1,6. Colour is decorative and is never required for decoding.</metadata>
   <defs><clipPath id="inner-clip-v9"><circle cx="${centre}" cy="${centre}" r="${v9InnerClipRadius}"/></clipPath></defs>
   <rect id="background" x="0" y="0" width="${canvas}" height="${canvas}" fill="${background}"/>
 
@@ -259,11 +283,15 @@ export async function buildV9Identicon(
     ${nestedSvg(constellationBody, constellation.viewBox, layer0X, layer0Y, layer0Size, layer0Size, `data-sign="${value.solar}" data-recognition-role="solar-constellation" data-orientation="upright"`)}
   </g>
 
+  <g clip-path="url(#inner-clip-v9)">
+    ${sunLayer(planetaryColour)}
+  </g>
+
   <g id="literal-sign-grid" data-recognition-role="literal-six-sign-grid" data-orientation="upright" opacity="0.28" clip-path="url(#inner-clip-v9)">
     ${innerSigns(value, signs, parityColour, background)}
   </g>
 
-  <g id="parity-stars-v9" data-code="reed-solomon-72-40-parity-stars-32-v9" data-code-role="error-correction-only" data-code-source-bytes="${v9DataByteCount}" data-code-parity-bytes="${v9ParityByteCount}" data-code-stars="${v9ParityByteCount}" data-code-colour="parity-star-foreground" clip-path="url(#inner-clip-v9)">
+  <g id="parity-stars-v9" data-code="reed-solomon-168-40-parity-stars-128-v9" data-code-role="error-correction-only" data-code-source-bytes="${v9DataByteCount}" data-code-parity-bytes="${v9ParityByteCount}" data-code-stars="${v9ParityByteCount}" data-code-colour="parity-star-foreground" clip-path="url(#inner-clip-v9)">
     ${parityLayer(value, parityColour)}
   </g>
 
@@ -271,16 +299,13 @@ export async function buildV9Identicon(
     ${planetLayer(value, planetaryColour)}
   </g>
 
-  <g clip-path="url(#inner-clip-v9)">
-    ${sunLayer(planetaryColour)}
-    ${northStarLayer(parityColour)}
-  </g>
-
   <g id="literal-ring-system" data-recognition-role="literal-sign-redundancy">
     <circle id="ring-outer" cx="${centre}" cy="${centre}" r="${outerRingRadius}" fill="none" stroke="${parityColour}" stroke-width="${ringStroke}"/>
     <circle id="ring-inner" cx="${centre}" cy="${centre}" r="${innerRingRadius}" fill="none" stroke="${parityColour}" stroke-width="${ringStroke}"/>
     ${ringSigns(value, signs, parityColour)}
   </g>
+
+  ${calibrationStarsLayer(parityColour)}
 </svg>
 `;
 }

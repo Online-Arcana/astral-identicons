@@ -51,18 +51,23 @@ interface CameraCapabilities extends MediaTrackCapabilities {
 }
 
 const analysisSize = 512;
-const automaticInterval = 120;
-const focusSettleMilliseconds = 450;
-const retainedFrameLimit = 8;
-const minimumFrames = 4;
-const minimumUsefulMilliseconds = 900;
-const retryAdditionalFrames = 3;
-const retryAdditionalMilliseconds = 650;
-const minimumSharpness = 12;
-const minimumContrast = 7;
-const minimumExposure = 0.18;
-const minimumEdgeDensity = 0.0015;
-const minimumOrientationConfidence = 0.12;
+const automaticInterval = 160;
+const focusSettleMilliseconds = 1800;
+const retainedFrameLimit = 12;
+const minimumFrames = 10;
+const minimumUsefulMilliseconds = 2400;
+const retryAdditionalFrames = 5;
+const retryAdditionalMilliseconds = 1200;
+const minimumSharpness = 36;
+const minimumContrast = 14;
+const minimumExposure = 0.42;
+const minimumEdgeDensity = 0.006;
+const minimumOrientationConfidence = 0.18;
+const minimumStableFrames = 4;
+const maximumExposureDelta = 0.055;
+const maximumContrastDelta = 4;
+const minimumRelativeSharpness = 0.82;
+const rejectedRelativeSharpness = 0.72;
 
 function required<T extends Element>(selector: string): T {
   const value = document.querySelector<T>(selector);
@@ -146,6 +151,7 @@ function captureImage(image: HTMLImageElement, canvas: HTMLCanvasElement): void 
 
 function usable(quality: FrameQuality, orientationConfidence: number): boolean {
   return (
+    quality.ready &&
     quality.sharpness >= minimumSharpness &&
     quality.contrast >= minimumContrast &&
     quality.exposure >= minimumExposure &&
@@ -185,6 +191,10 @@ export class V9Scanner {
   #lastUsefulAt: number | undefined;
   #retryAfterFrames = minimumFrames;
   #retryAfterMilliseconds = minimumUsefulMilliseconds;
+  #bestScore = Number.NEGATIVE_INFINITY;
+  #bestSharpness = 0;
+  #stableFrames = 0;
+  #lastQuality: FrameQuality | undefined;
 
   constructor(options: ScannerOptions) {
     this.#options = options;
@@ -287,7 +297,7 @@ export class V9Scanner {
     const copy = document.querySelector<HTMLElement>(".scan-copy p");
     if (copy) {
       copy.textContent =
-        "Keep the full circle inside the guide. V9 reads the North Star, literal signs, eleven planetary glyphs and whichever parity stars are reliable. Colour is ignored.";
+        "Keep the full canvas and outer circle inside the guide. The scanner waits for focus and exposure to settle, rejects blurred frames, and retains only the clearest evidence.";
     }
 
     await this.acquireCamera(session, "Requesting camera access…");
@@ -324,12 +334,14 @@ export class V9Scanner {
         return;
       }
 
-      this.message("Letting focus and exposure settle…");
+      this.message("Holding the camera open while focus and exposure settle…");
       await pause(focusSettleMilliseconds);
       if (session !== this.#session || !this.#dialog.open) return;
 
+      this.#stableFrames = 0;
+      this.#lastQuality = undefined;
       this.message(
-        "Bring the complete identicon into the guide. Clear frames will be compared automatically."
+        "Bring the complete identicon into the guide and hold steady. Only sharp, stable frames will count."
       );
       this.schedule(0);
     } catch (error) {
@@ -387,11 +399,16 @@ export class V9Scanner {
     this.#lastUsefulAt = undefined;
     this.#retryAfterFrames = minimumFrames;
     this.#retryAfterMilliseconds = minimumUsefulMilliseconds;
+    this.#bestScore = Number.NEGATIVE_INFINITY;
+    this.#bestSharpness = 0;
+    this.#stableFrames = 0;
+    this.#lastQuality = undefined;
     this.#stage.classList.remove("captured", "analysing");
     this.#video.style.display = "";
     this.#guide.style.display = "";
     this.#frozen.style.display = "none";
     this.hideProgress();
+    context(this.#frozen).clearRect(0, 0, this.#frozen.width, this.#frozen.height);
     context(this.#normalised).clearRect(
       0,
       0,
@@ -410,6 +427,51 @@ export class V9Scanner {
     }, delay);
   }
 
+  private relativelySharp(quality: FrameQuality): boolean {
+    if (this.#bestSharpness === 0) return true;
+    return quality.sharpness >= this.#bestSharpness * rejectedRelativeSharpness;
+  }
+
+  private stable(quality: FrameQuality): boolean {
+    const previous = this.#lastQuality;
+    const previousBest = this.#bestSharpness;
+    this.#bestSharpness = Math.max(this.#bestSharpness, quality.sharpness);
+    this.#lastQuality = quality;
+
+    if (!previous) {
+      this.#stableFrames = 0;
+      return false;
+    }
+
+    const focusStillImproving =
+      previousBest > 0 && quality.sharpness > previousBest * 1.08;
+    const focusStable =
+      quality.sharpness >= this.#bestSharpness * minimumRelativeSharpness;
+    const exposureStable =
+      Math.abs(quality.exposure - previous.exposure) <= maximumExposureDelta;
+    const contrastStable =
+      Math.abs(quality.contrast - previous.contrast) <= maximumContrastDelta;
+
+    if (focusStillImproving || !focusStable || !exposureStable || !contrastStable) {
+      this.#stableFrames = 0;
+      return false;
+    }
+
+    this.#stableFrames += 1;
+    return this.#stableFrames >= minimumStableFrames;
+  }
+
+  private frameScore(
+    quality: FrameQuality,
+    orientationConfidence: number
+  ): number {
+    return (
+      quality.score * 100 +
+      Math.min(80, Math.sqrt(Math.max(0, quality.sharpness)) * 6) +
+      orientationConfidence * 40
+    );
+  }
+
   private async automaticFrame(): Promise<void> {
     if (!this.#stream || !this.#dialog.open || this.#busy || this.#processing) return;
     this.#busy = true;
@@ -420,7 +482,7 @@ export class V9Scanner {
       const circle = findOuterCircle(this.#capture);
 
       if (!circle) {
-        this.message("Looking for the complete outer circle…");
+        this.message("Looking for the complete outer circle and canvas edge…");
         return;
       }
 
@@ -434,23 +496,37 @@ export class V9Scanner {
         this.message(this.qualityMessage(quality, orientation.confidence));
         return;
       }
+      if (!this.relativelySharp(quality)) {
+        this.message("That frame is blurrier than the clearest frame already seen. Discarded.");
+        return;
+      }
 
       const at = performance.now();
-      this.remember({
+      const frame: CapturedFrame = {
         canvas,
         quality,
         orientation: orientation.angle,
         orientationConfidence: orientation.confidence,
-        score: quality.score * 100 + orientation.confidence * 40,
+        score: this.frameScore(quality, orientation.confidence),
         at
-      });
+      };
+      this.considerBest(frame);
+
+      if (!this.stable(quality)) {
+        this.message(
+          `A clear frame is visible, but it is not eligible for decoding until focus and exposure remain stable (${this.#stableFrames}/${minimumStableFrames})…`
+        );
+        return;
+      }
+
+      this.remember(frame);
       this.#framesCaptured += 1;
       this.#usefulMilliseconds += this.#lastUsefulAt === undefined
-        ? 100
-        : Math.max(40, Math.min(250, at - this.#lastUsefulAt));
+        ? automaticInterval
+        : Math.max(80, Math.min(300, at - this.#lastUsefulAt));
       this.#lastUsefulAt = at;
       this.message(
-        `${this.#framesCaptured} clear frames · ${(this.#usefulMilliseconds / 1000).toFixed(1)}s useful capture · North Star locked`
+        `${this.#framesCaptured} stable clear frames · ${(this.#usefulMilliseconds / 1000).toFixed(1)}s useful capture · calibration locked`
       );
 
       if (
@@ -476,19 +552,28 @@ export class V9Scanner {
     quality: FrameQuality,
     orientationConfidence: number
   ): string {
-    if (orientationConfidence < minimumOrientationConfidence) {
-      return "Looking for the fixed North Star near the inner edge…";
-    }
     if (quality.sharpness < minimumSharpness) {
-      return "That instant was blurred. Waiting for another clear frame…";
+      return `Image is blurred (sharpness ${quality.sharpness.toFixed(1)}). Holding for autofocus…`;
     }
     if (quality.exposure < minimumExposure) {
-      return "Waiting for a better-exposed frame…";
+      return "Exposure is still clipped or changing. Holding for camera compensation…";
     }
     if (quality.contrast < minimumContrast) {
-      return "Reduce glare or move slightly closer…";
+      return "Contrast is too low. Reduce glare and hold the phone steady…";
     }
-    return "Waiting for a more complete frame…";
+    if (quality.edgeDensity < minimumEdgeDensity || !quality.ready) {
+      return "The identicon is incomplete or too soft to trust. No frame was retained…";
+    }
+    if (orientationConfidence < minimumOrientationConfidence) {
+      return "Looking for the twelve fixed circumference stars and solar-ray pattern…";
+    }
+    return "Waiting for a sharper, more complete frame…";
+  }
+
+  private considerBest(frame: CapturedFrame): void {
+    if (frame.score <= this.#bestScore) return;
+    this.#bestScore = frame.score;
+    this.updateBestFrame(frame.canvas);
   }
 
   private remember(frame: CapturedFrame): void {
@@ -497,12 +582,18 @@ export class V9Scanner {
     if (this.#frames.length > retainedFrameLimit) this.#frames.length = retainedFrameLimit;
   }
 
-  private showFrozen(source: HTMLCanvasElement): void {
+  private updateBestFrame(source: HTMLCanvasElement): void {
     this.#frozen.width = source.width;
     this.#frozen.height = source.height;
     const target = context(this.#frozen);
     target.clearRect(0, 0, this.#frozen.width, this.#frozen.height);
     target.drawImage(source, 0, 0);
+  }
+
+  private showFrozen(): void {
+    if (this.#frozen.width === 0 || this.#frozen.height === 0) {
+      this.updateBestFrame(this.#normalised);
+    }
     this.#video.style.display = "none";
     this.#guide.style.display = "none";
     this.#frozen.style.display = "block";
@@ -530,9 +621,8 @@ export class V9Scanner {
     this.#upload.disabled = true;
     this.stopCamera();
     this.#stage.classList.add("captured");
-    const display = this.#frames[0]?.canvas ?? this.#normalised;
-    this.showFrozen(display);
-    this.showProgress(5, "Camera stopped. Analysing the saved v9 frames…");
+    this.showFrozen();
+    this.showProgress(5, "Camera stopped. Analysing the stable retained v9 frames…");
     await nextPaint();
 
     try {
@@ -544,7 +634,7 @@ export class V9Scanner {
         const frame = pending[index]!;
         this.showProgress(
           10 + (index / Math.max(1, pending.length)) * 72,
-          `Reading planets, signs and parity from frame ${index + 1}/${pending.length}…`
+          `Reading calibration, planets, signs and parity from frame ${index + 1}/${pending.length}…`
         );
         await nextPaint();
         const observation = await observeV9Frame(frame.canvas);
@@ -557,12 +647,12 @@ export class V9Scanner {
       if (!reading) {
         if (photo) {
           throw new Error(
-            "The photo did not provide one uniquely validated v9 identity. Use a clearer or higher-resolution image."
+            "The photo did not provide one uniquely validated v9 identity. Use a sharper or higher-resolution image."
           );
         }
 
         await this.resumeCapture(
-          "The saved evidence remains ambiguous. It has been kept for the next clear frames."
+          "The saved evidence remains ambiguous. It has been kept for the next stable clear frames."
         );
         return;
       }
@@ -602,9 +692,9 @@ export class V9Scanner {
     this.#retryAfterFrames = this.#framesCaptured + retryAdditionalFrames;
     this.#retryAfterMilliseconds =
       this.#usefulMilliseconds + retryAdditionalMilliseconds;
-    this.showProgress(100, `${reason} All prior evidence is preserved.`);
-    this.message("A few more clear frames are needed. Previous evidence is preserved.");
-    await pause(450);
+    this.showProgress(100, `${reason} All prior evidence and the best frame are preserved.`);
+    this.message("More stable clear frames are needed. Previous evidence is preserved.");
+    await pause(600);
 
     if (!this.#dialog.open) return;
     this.#processing = false;
@@ -626,7 +716,7 @@ export class V9Scanner {
     }
 
     this.#upload.disabled = true;
-    this.message("Opening the selected photo…");
+    this.message("Opening and checking the selected photo for blur…");
 
     try {
       const vision = await loadOpenCv();
@@ -641,20 +731,22 @@ export class V9Scanner {
 
       if (!usable(quality, orientation.confidence)) {
         throw new Error(
-          "The selected photo is too blurred, clipped or incomplete for safe v9 reconstruction"
+          `The selected photo is too blurred, clipped or incomplete for safe v9 reconstruction (sharpness ${quality.sharpness.toFixed(1)})`
         );
       }
 
-      this.remember({
+      const frame: CapturedFrame = {
         canvas,
         quality,
         orientation: orientation.angle,
         orientationConfidence: orientation.confidence,
-        score: quality.score * 100 + orientation.confidence * 40,
+        score: this.frameScore(quality, orientation.confidence),
         at: performance.now()
-      });
+      };
+      this.considerBest(frame);
+      this.remember(frame);
       this.#framesCaptured = 1;
-      this.#usefulMilliseconds = 100;
+      this.#usefulMilliseconds = automaticInterval;
       await this.process(true);
     } finally {
       this.#busy = false;
@@ -676,7 +768,7 @@ export class V9Scanner {
     this.showProgress(100, value);
     this.#progressText.style.color = "#ff9eaa";
     this.message(
-      "That photo could not be reconstructed. Choose another photo or reopen the camera.",
+      "That photo could not be reconstructed. Choose a sharper photo or reopen the camera.",
       "error"
     );
     this.#upload.disabled = false;

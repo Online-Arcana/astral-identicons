@@ -9,7 +9,11 @@ import {
   v9SignRoles,
   type V9SignObservation
 } from "../src/scan-v9-core.ts";
-import { v9Parity, type V9ByteObservation } from "../src/record-v9.ts";
+import {
+  v9Parity,
+  v9ParityByteCount,
+  type V9ByteObservation
+} from "../src/record-v9.ts";
 import { rawPublicKey } from "../src/seed-value.ts";
 import { input } from "../src/input.ts";
 
@@ -77,7 +81,7 @@ function planetObservations(): readonly PlanetaryObservation[] {
 
 describe("v9 ranked decoder", () => {
   test("does not commit to one uncertain planetary rank without parity", () => {
-    const erasedParity = Array.from({ length: 32 }, () => ({
+    const erasedParity = Array.from({ length: v9ParityByteCount }, () => ({
       value: null,
       confidence: 0
     }));

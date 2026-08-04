@@ -1,4 +1,16 @@
-import { centre, innerRingRadius, ringStroke } from "./layout.ts";
+import {
+  v9CalibrationAngle,
+  v9CalibrationSampleCount,
+  v9RayFadingLevel,
+  v9StarCalibrationLevel
+} from "./calibration-v9.ts";
+import {
+  canvas,
+  centre,
+  innerRingRadius,
+  outerRingRadius,
+  ringStroke
+} from "./layout.ts";
 import {
   planetAnchorCount,
   planetDensityLevelCount,
@@ -21,6 +33,16 @@ export interface SunRay {
   readonly start: Point;
   readonly end: Point;
   readonly angle: number;
+  readonly level: number;
+  readonly opacity: number;
+}
+
+export interface CalibrationStar {
+  readonly point: Point;
+  readonly angle: number;
+  readonly level: number;
+  readonly size: number;
+  readonly opacity: number;
 }
 
 interface AnchorCandidate extends Point {
@@ -43,20 +65,29 @@ export const satelliteOrbitPadding = 0;
 
 export const centralSun = {
   glyphSize: 46,
-  rayCount: 12,
+  rayCount: v9CalibrationSampleCount,
   rayInnerRadius: 25,
   rayOuterRadius: 33,
   rayStrokeWidth: 1.2
 } as const;
 
+/** 128 indexed payload stars arranged as two collision-free polar tracks. */
 export const parityGroupTrackCount = 2;
-export const parityGroupSectorCount = 16;
-export const parityGroupRadii = [333, 355] as const;
-export const parityLocalSpacing = 8;
-export const parityStarSizes = [9, 13, 17, 21, 25, 27] as const;
+export const parityGroupSectorCount = 64;
+export const parityGroupRadii = [332, 365] as const;
+export const parityLocalSpacing = 3;
+export const parityStarSizes = [13, 15, 17, 19, 21, 23] as const;
 export const parityDensityStrokeWidths = [0, 0, 0, 0, 0, 0] as const;
 export const parityFadingOpacities = [0.44, 0.55, 0.66, 0.77, 0.88, 1] as const;
 export const parityDensityOpacities = parityFadingOpacities;
+
+/**
+ * Twelve fixed references sit outside the outer ring, one every 30 degrees.
+ * They do not consume payload space and cannot collide with parity stars.
+ */
+export const calibrationStarRadius = 498;
+export const calibrationStarSizes = parityStarSizes;
+export const calibrationStarFadingOpacities = parityFadingOpacities;
 
 export const maximumPlanetEnvelope =
   Math.max(...planetGlyphSizes) / 2 +
@@ -65,6 +96,8 @@ export const maximumPlanetEnvelope =
 export const maximumParityEnvelope =
   Math.hypot(parityLocalSpacing * 1.5, parityLocalSpacing * 0.5) +
   Math.max(...parityStarSizes) / 2;
+export const maximumCalibrationStarRadius =
+  Math.max(...calibrationStarSizes) / 2;
 export const encodedFieldGap =
   parityGroupRadii[0] - maximumParityEnvelope -
   (planetAnchorOuterRadius + maximumPlanetEnvelope);
@@ -72,6 +105,29 @@ export const encodedFieldGap =
 function angularDistance(left: number, right: number): number {
   const difference = Math.abs(left - right) % (Math.PI * 2);
   return Math.min(difference, Math.PI * 2 - difference);
+}
+
+function polar(angle: number, radius: number): Point {
+  return {
+    x: centre + Math.cos(angle) * radius,
+    y: centre + Math.sin(angle) * radius
+  };
+}
+
+export function calibrationStarPoint(index: number): Point {
+  const angle = (v9CalibrationAngle(index) - 90) * Math.PI / 180;
+  return polar(angle, calibrationStarRadius);
+}
+
+export function calibrationStar(index: number): CalibrationStar {
+  const level = v9StarCalibrationLevel(index);
+  return {
+    point: calibrationStarPoint(index),
+    angle: v9CalibrationAngle(index),
+    level,
+    size: calibrationStarSizes[level]!,
+    opacity: calibrationStarFadingOpacities[level]!
+  };
 }
 
 function anchorCandidates(): AnchorCandidate[] {
@@ -167,7 +223,7 @@ if (satellitePositionCount !== 6) {
   throw new Error("v9 satellites require exactly six angular positions");
 }
 if (parityGroupTrackCount * parityGroupSectorCount !== v9ParityStarCount) {
-  throw new Error("v9 parity geometry must expose exactly 32 indexed groups");
+  throw new Error("v9 parity geometry must expose exactly 128 indexed groups");
 }
 if (parityStarSizes.length !== v9ParitySizeLevelCount) {
   throw new Error("v9 parity size geometry is inconsistent");
@@ -178,6 +234,11 @@ if (parityFadingOpacities.length !== v9ParityDensityLevelCount) {
 if (v9ParityPositionCount !== 8) {
   throw new Error("v9 parity groups require exactly eight local anchors");
 }
+for (let level = 0; level < planetGlyphSizes.length; level += 1) {
+  if (planetGlyphSizes[level] !== parityStarSizes[level]! * 2) {
+    throw new Error("v9 planetary glyph sizes must be exactly twice star sizes");
+  }
+}
 if (
   planetAnchorInnerRadius <=
   centralSun.rayOuterRadius + maximumPlanetEnvelope
@@ -187,18 +248,31 @@ if (
 if (encodedFieldGap <= 0) {
   throw new Error("v9 planetary and parity envelopes must not overlap");
 }
+const minimumTrackChord =
+  2 * parityGroupRadii[0] * Math.sin(Math.PI / parityGroupSectorCount);
+if (minimumTrackChord <= maximumParityEnvelope * 2) {
+  throw new Error("adjacent v9 parity envelopes on a track must not overlap");
+}
+if (
+  parityGroupRadii[1] - parityGroupRadii[0] <=
+  maximumParityEnvelope * 2
+) {
+  throw new Error("v9 parity tracks must not overlap");
+}
 if (
   parityGroupRadii.at(-1)! + maximumParityEnvelope >
   v9InnerClipRadius
 ) {
   throw new Error("v9 parity stars must remain inside the inner ring");
 }
-
-function polar(angle: number, radius: number): Point {
-  return {
-    x: centre + Math.cos(angle) * radius,
-    y: centre + Math.sin(angle) * radius
-  };
+if (calibrationStarRadius <= outerRingRadius + ringStroke / 2) {
+  throw new Error("v9 calibration stars must remain outside the outer ring");
+}
+if (
+  calibrationStarRadius + maximumCalibrationStarRadius >
+  canvas / 2
+) {
+  throw new Error("v9 calibration stars must remain inside the canvas");
 }
 
 export function planetAnchorPoint(anchor: number): Point {
@@ -234,7 +308,6 @@ export function satellitePoint(
 
 function parityGroupGeometry(group: number): {
   readonly angle: number;
-  readonly radius: number;
   readonly base: Point;
 } {
   if (!Number.isInteger(group) || group < 0 || group >= v9ParityStarCount) {
@@ -243,9 +316,11 @@ function parityGroupGeometry(group: number): {
 
   const track = Math.floor(group / parityGroupSectorCount);
   const sector = group % parityGroupSectorCount;
-  const angle = ((sector + 0.5) / parityGroupSectorCount) * Math.PI * 2 - Math.PI / 2;
+  const phase = track % 2 === 0 ? 0 : 0.5;
+  const angle =
+    ((sector + phase) / parityGroupSectorCount) * Math.PI * 2 - Math.PI / 2;
   const radius = parityGroupRadii[track]!;
-  return { angle, radius, base: polar(angle, radius) };
+  return { angle, base: polar(angle, radius) };
 }
 
 export function parityAnchorPoint(group: number, position: number): Point {
@@ -282,9 +357,12 @@ export function sunRay(index: number): SunRay {
     throw new Error(`sun ray must be between 0 and ${centralSun.rayCount - 1}`);
   }
 
-  const angle = index / centralSun.rayCount * Math.PI * 2 - Math.PI / 2;
+  const angle = (v9CalibrationAngle(index) - 90) * Math.PI / 180;
+  const level = v9RayFadingLevel(index);
   return {
-    angle: index * 30,
+    angle: v9CalibrationAngle(index),
+    level,
+    opacity: planetFadingOpacities[level]!,
     start: polar(angle, centralSun.rayInnerRadius),
     end: polar(angle, centralSun.rayOuterRadius)
   };

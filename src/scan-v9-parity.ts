@@ -9,6 +9,7 @@ import {
   v9ParitySizeLevelCount,
   v9ParityStarCount
 } from "./parity-v9.ts";
+import type { V9CalibrationObservation } from "./scan-v9-calibration.ts";
 import {
   foregroundEvidence,
   greyReference,
@@ -39,7 +40,7 @@ interface PositionReading {
 
 interface Profile {
   readonly extent: number | null;
-  readonly density: number | null;
+  readonly fading: number | null;
   readonly confidence: number;
 }
 
@@ -63,7 +64,7 @@ function positionReading(
   group: number
 ): PositionReading {
   const scale = image.width / 1024;
-  const radius = Math.max(4, parityStarSizes.at(-1)! * scale * 0.72);
+  const radius = Math.max(4, parityStarSizes.at(-1)! * scale * 0.58);
   const ranked = Array.from({ length: v9ParityPositionCount }, (_unused, value) => {
     const point = parityAnchorPoint(group, value);
     return {
@@ -85,7 +86,7 @@ function positionReading(
     : (best.score - second.score) / best.score;
   const confidence = clamp(margin * 0.65 + best.score * 0.35, 0, 1);
 
-  if (best.score < 0.08 || margin < 0.08) {
+  if (best.score < 0.08 || margin < 0.045) {
     return { value: null, confidence };
   }
 
@@ -102,7 +103,7 @@ function profile(
   point: Point
 ): Profile {
   const scale = image.width / 1024;
-  const radius = Math.max(5, Math.ceil(12 * scale));
+  const radius = Math.max(7, Math.ceil(15 * scale));
   const centreX = point.x * scale;
   const centreY = point.y * scale;
   const side = radius * 2 + 1;
@@ -118,7 +119,7 @@ function profile(
       const index = row * side + column;
       evidence[index] = value;
 
-      if (Math.abs(column - radius) > 2 || Math.abs(row - radius) > 2) continue;
+      if (Math.abs(column - radius) > 3 || Math.abs(row - radius) > 3) continue;
       if (value <= peak) continue;
       peak = value;
       seed = index;
@@ -126,10 +127,10 @@ function profile(
   }
 
   if (peak < 0.12) {
-    return { extent: null, density: null, confidence: 0 };
+    return { extent: null, fading: null, confidence: 0 };
   }
 
-  const threshold = Math.max(0.12, peak * 0.28);
+  const threshold = Math.max(0.1, peak * 0.25);
   const visited = new Uint8Array(side * side);
   const queue: number[] = [seed];
   visited[seed] = 1;
@@ -172,17 +173,17 @@ function profile(
   }
 
   if (samples < 3 || extent === 0) {
-    return { extent: null, density: null, confidence: 0 };
+    return { extent: null, fading: null, confidence: 0 };
   }
 
   const diameter = extent * 2 / scale;
+  const fading = mass / samples;
   const occupiedArea = Math.PI * extent * extent;
-  const density = mass / Math.max(1, occupiedArea);
-  const confidence = clamp(samples / Math.max(8, occupiedArea * 0.35), 0, 1);
+  const confidence = clamp(samples / Math.max(8, occupiedArea * 0.3), 0, 1);
 
   return {
     extent: diameter,
-    density,
+    fading,
     confidence
   };
 }
@@ -243,10 +244,7 @@ function levelReading(
   })).sort((left, right) => left.distance - right.distance);
   const best = ranked[0]!;
   const second = ranked[1]!;
-  const span = Math.max(
-    0.001,
-    centres.at(-1)! - centres[0]!
-  );
+  const span = Math.max(0.001, centres.at(-1)! - centres[0]!);
   const confidence = clamp(
     (second.distance - best.distance) / (span / centres.length),
     0,
@@ -259,13 +257,13 @@ function levelReading(
   };
 }
 
-function densityFallback(raw: readonly RawObservation[]): readonly number[] {
+function fadingFallback(raw: readonly RawObservation[]): readonly number[] {
   const values = raw
-    .map((observation) => observation.profile.density)
+    .map((observation) => observation.profile.fading)
     .filter((value): value is number => value !== null)
     .sort((left, right) => left - right);
-  const minimum = values[0] ?? 0.08;
-  const maximum = values.at(-1) ?? 0.55;
+  const minimum = values[0] ?? 0.2;
+  const maximum = values.at(-1) ?? 0.92;
 
   return Array.from({ length: v9ParityDensityLevelCount }, (_unused, index) => {
     return minimum + (maximum - minimum) * index /
@@ -274,7 +272,8 @@ function densityFallback(raw: readonly RawObservation[]): readonly number[] {
 }
 
 export function observeV9Parity(
-  image: ImageData
+  image: ImageData,
+  calibration?: V9CalibrationObservation
 ): readonly V9ParityObservation[] {
   if (image.width !== image.height || image.width < 128) {
     throw new Error("v9 parity observation requires a square normalised image");
@@ -287,23 +286,23 @@ export function observeV9Parity(
       position,
       profile: position.point
         ? profile(image, reference, position.point)
-        : { extent: null, density: null, confidence: 0 }
+        : { extent: null, fading: null, confidence: 0 }
     };
   });
-  const sizeCentres = populationCentres(
+  const sizeCentres = calibration?.starSizeCentres ?? populationCentres(
     raw.map((observation) => observation.profile.extent),
     v9ParitySizeLevelCount,
     parityStarSizes
   );
-  const densityCentres = populationCentres(
-    raw.map((observation) => observation.profile.density),
+  const fadingCentres = calibration?.fadingCentres ?? populationCentres(
+    raw.map((observation) => observation.profile.fading),
     v9ParityDensityLevelCount,
-    densityFallback(raw)
+    fadingFallback(raw)
   );
 
   return raw.map((observation) => {
     const size = levelReading(observation.profile.extent, sizeCentres);
-    const density = levelReading(observation.profile.density, densityCentres);
+    const density = levelReading(observation.profile.fading, fadingCentres);
     const position = observation.position;
     const confidence = Math.min(
       position.confidence,

@@ -2,6 +2,7 @@ import type {
   PlanetaryAlternative,
   PlanetaryObservation
 } from "./planet-code.ts";
+import { v9ParityStarCount } from "./parity-v9.ts";
 import {
   decodeV9Candidates,
   uniqueV9Candidate,
@@ -10,7 +11,10 @@ import {
   type V9SignAlternative,
   type V9SignObservation
 } from "./scan-v9-core.ts";
-import { observeV9Orientation } from "./scan-v9-orientation.ts";
+import {
+  observeV9Calibration,
+  type V9CalibrationObservation
+} from "./scan-v9-calibration.ts";
 import {
   observeV9Parity,
   type V9ParityObservation
@@ -23,6 +27,7 @@ import type { Sign } from "./sign.ts";
 export interface V9FrameObservation {
   readonly orientation: number;
   readonly orientationConfidence: number;
+  readonly calibration: V9CalibrationObservation;
   readonly canvas: HTMLCanvasElement;
   readonly planets: readonly PlanetaryObservation[];
   readonly signs: readonly V9SignObservation[];
@@ -66,17 +71,18 @@ function uprightCanvas(
 export async function observeV9Frame(
   source: HTMLCanvasElement
 ): Promise<V9FrameObservation> {
-  const orientation = observeV9Orientation(imageData(source));
-  const canvas = uprightCanvas(source, orientation.angle);
+  const calibration = observeV9Calibration(imageData(source));
+  const canvas = uprightCanvas(source, calibration.angle);
   const image = imageData(canvas);
-  const planets = observeV9Planets(image);
-  const parity = observeV9Parity(image);
+  const planets = observeV9Planets(image, calibration);
+  const parity = observeV9Parity(image, calibration);
   const signs = await observeV9Signs(image);
   const candidates = decodeV9Candidates(planets, signs, parity);
 
   return {
-    orientation: orientation.angle,
-    orientationConfidence: orientation.confidence,
+    orientation: calibration.angle,
+    orientationConfidence: calibration.confidence,
+    calibration,
     canvas,
     planets,
     signs,
@@ -199,7 +205,7 @@ function mergeSigns(
 function mergeParity(
   frames: readonly V9FrameObservation[]
 ): readonly V9ParityObservation[] {
-  const slots = frames[0]?.parity.length ?? 32;
+  const slots = frames[0]?.parity.length ?? v9ParityStarCount;
 
   return Array.from({ length: slots }, (_unused, slot) => {
     const scores = new Float32Array(256);

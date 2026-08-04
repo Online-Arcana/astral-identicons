@@ -5,6 +5,7 @@ import {
   satelliteDotRadii,
   satellitePoint
 } from "./layout-v9.ts";
+import type { V9CalibrationObservation } from "./scan-v9-calibration.ts";
 import {
   foregroundEvidence,
   greyReference,
@@ -64,6 +65,11 @@ interface SatelliteCandidate {
   readonly score: number;
 }
 
+interface VisualCalibration {
+  readonly sizes: readonly number[];
+  readonly fading: readonly number[];
+}
+
 const cropSize = 72;
 const templateDimension = 36;
 const nominalSizeLevel = 3;
@@ -81,6 +87,22 @@ function clamp(value: number, minimum: number, maximum: number): number {
   return Math.max(minimum, Math.min(maximum, value));
 }
 
+function calibrationValues(
+  calibration?: V9CalibrationObservation
+): VisualCalibration {
+  if (!calibration || calibration.confidence < 0.08) {
+    return {
+      sizes: planetGlyphSizes,
+      fading: planetFadingOpacities
+    };
+  }
+
+  return {
+    sizes: calibration.planetSizeCentres,
+    fading: calibration.fadingCentres
+  };
+}
+
 function canvasContext(canvas: HTMLCanvasElement): CanvasRenderingContext2D {
   const context = canvas.getContext("2d", { willReadFrequently: true });
   if (!context) throw new Error("Could not access a v9 planetary template canvas");
@@ -91,9 +113,19 @@ function templateMask(
   glyph: string,
   rotation: number,
   sizeLevel: number,
-  fadingLevel: number
+  fadingLevel: number,
+  values: VisualCalibration
 ): Float32Array {
-  const key = [glyph, rotation, sizeLevel, fadingLevel].join(":");
+  const sizeValue = values.sizes[sizeLevel] ?? planetGlyphSizes[sizeLevel]!;
+  const fadingValue = values.fading[fadingLevel] ?? planetFadingOpacities[fadingLevel]!;
+  const key = [
+    glyph,
+    rotation,
+    sizeLevel,
+    fadingLevel,
+    sizeValue.toFixed(3),
+    fadingValue.toFixed(4)
+  ].join(":");
   const cached = templateCache.get(key);
   if (cached) return cached;
 
@@ -102,12 +134,12 @@ function templateMask(
   canvas.height = templateDimension;
   const context = canvasContext(canvas);
   const scale = templateDimension / cropSize;
-  const size = planetGlyphSizes[sizeLevel]! * scale;
+  const size = sizeValue * scale;
 
   context.clearRect(0, 0, canvas.width, canvas.height);
   context.translate(canvas.width / 2, canvas.height / 2);
   context.rotate(rotation * 30 * Math.PI / 180);
-  context.globalAlpha = planetFadingOpacities[fadingLevel]!;
+  context.globalAlpha = fadingValue;
   context.textAlign = "center";
   context.textBaseline = "middle";
   context.font = `500 ${size}px ${symbolFont}`;
@@ -202,10 +234,12 @@ function bestCorrelation(
 
 function anchorSamples(
   image: ImageData,
-  reference: GreyReference
+  reference: GreyReference,
+  values: VisualCalibration
 ): readonly AnchorSample[] {
   const scale = image.width / 1024;
-  const radius = Math.max(3, planetGlyphSizes.at(-1)! * scale * 0.52);
+  const maximum = Math.max(...values.sizes, planetGlyphSizes.at(-1)!);
+  const radius = Math.max(3, maximum * scale * 0.52);
 
   return Array.from({ length: planetAnchorCount }, (_unused, anchor) => {
     const point = planetAnchorPoint(anchor);
@@ -231,7 +265,8 @@ function anchorSamples(
 
 function coarseCandidates(
   glyph: string,
-  anchors: readonly AnchorSample[]
+  anchors: readonly AnchorSample[],
+  values: VisualCalibration
 ): readonly CoarseCandidate[] {
   const result: CoarseCandidate[] = [];
 
@@ -241,7 +276,8 @@ function coarseCandidates(
         glyph,
         rotation,
         nominalSizeLevel,
-        nominalFadingLevel
+        nominalFadingLevel,
+        values
       );
       const templateScore = correlation(anchor.observed, expected, 0, 0);
       result.push({
@@ -260,7 +296,8 @@ function coarseCandidates(
 
 function sizedCandidates(
   glyph: string,
-  coarse: readonly CoarseCandidate[]
+  coarse: readonly CoarseCandidate[],
+  values: VisualCalibration
 ): readonly SizedCandidate[] {
   const result: SizedCandidate[] = [];
 
@@ -270,7 +307,8 @@ function sizedCandidates(
         glyph,
         candidate.rotation,
         size,
-        nominalFadingLevel
+        nominalFadingLevel,
+        values
       );
       const sizeScore = bestCorrelation(candidate.observed, expected);
       result.push({
@@ -289,17 +327,19 @@ function sizedCandidates(
 
 function fadedCandidates(
   glyph: string,
-  sized: readonly SizedCandidate[]
+  sized: readonly SizedCandidate[],
+  values: VisualCalibration
 ): readonly FadedCandidate[] {
   const result: FadedCandidate[] = [];
 
   for (const candidate of sized) {
-    for (let fading = 0; fading < planetFadingOpacities.length; fading += 1) {
+    for (let fading = 0; fading < values.fading.length; fading += 1) {
       const expected = templateMask(
         glyph,
         candidate.rotation,
         candidate.size,
-        fading
+        fading,
+        values
       );
       const fadingScore = bestCorrelation(candidate.observed, expected);
       result.push({
@@ -431,11 +471,12 @@ function alternatives(
   image: ImageData,
   reference: GreyReference,
   glyph: string,
-  anchors: readonly AnchorSample[]
+  anchors: readonly AnchorSample[],
+  values: VisualCalibration
 ): readonly PlanetaryAlternative[] {
-  const coarse = coarseCandidates(glyph, anchors);
-  const sized = sizedCandidates(glyph, coarse);
-  const faded = fadedCandidates(glyph, sized);
+  const coarse = coarseCandidates(glyph, anchors, values);
+  const sized = sizedCandidates(glyph, coarse, values);
+  const faded = fadedCandidates(glyph, sized, values);
   const candidates: Array<{
     readonly value: PlanetaryAlternative;
     readonly score: number;
@@ -447,7 +488,7 @@ function alternatives(
       image,
       reference,
       point,
-      planetGlyphSizes[candidate.size]!
+      values.sizes[candidate.size] ?? planetGlyphSizes[candidate.size]!
     );
 
     for (const satellite of satelliteCandidates(profiles)) {
@@ -496,14 +537,16 @@ function alternatives(
 }
 
 export function observeV9Planets(
-  image: ImageData
+  image: ImageData,
+  calibration?: V9CalibrationObservation
 ): readonly PlanetaryObservation[] {
   if (image.width !== image.height || image.width < 128) {
     throw new Error("v9 planetary recognition requires a square normalised image");
   }
 
   const reference = greyReference(image);
-  const anchors = anchorSamples(image, reference);
+  const values = calibrationValues(calibration);
+  const anchors = anchorSamples(image, reference, values);
 
   return planetaryGlyphs.map((definition) => ({
     key: definition.key,
@@ -511,7 +554,8 @@ export function observeV9Planets(
       image,
       reference,
       definition.glyph,
-      anchors
+      anchors,
+      values
     )
   }));
 }

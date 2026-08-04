@@ -6,7 +6,7 @@ export interface V9ParityVisualState {
   readonly density: number;
 }
 
-export const v9ParityStarCount = 32;
+export const v9ParityStarCount = 128;
 export const v9ParityPositionCount = 8;
 export const v9ParitySizeLevelCount = 6;
 export const v9ParityDensityLevelCount = 6;
@@ -72,7 +72,7 @@ export function v9ParityByte(
     density < 0 ||
     density >= v9ParityDensityLevelCount
   ) {
-    throw new Error("v9 parity-star density is invalid");
+    throw new Error("v9 parity-star fading is invalid");
   }
 
   const state =
