@@ -27,7 +27,18 @@ const fields = [
 ] as const;
 
 const form = document.querySelector<HTMLFormElement>("#builder")!;
-const astralFile = document.querySelector<HTMLInputElement>("#astral-file")!;
+const astralWrap = document.createElement("div");
+const astralLabel = document.createElement("label");
+const astralFile = document.createElement("input");
+astralWrap.className = "field";
+astralLabel.htmlFor = "astral-file";
+astralLabel.textContent = "Packaged astral file";
+astralFile.id = "astral-file";
+astralFile.type = "file";
+astralFile.accept = ".astral,application/octet-stream";
+astralWrap.append(astralLabel, astralFile);
+form.prepend(astralWrap);
+
 const seedField = document.querySelector<HTMLInputElement>("#seed")!;
 const fieldHost = document.querySelector<HTMLDivElement>("#sign-fields")!;
 const preview = document.querySelector<HTMLDivElement>("#preview")!;
