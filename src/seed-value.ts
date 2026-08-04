@@ -48,6 +48,6 @@ export function seedBytes(value: Pick<IdenticonInput, "seed">): Uint8Array {
   return bytes;
 }
 
-export function seedMaterial(value: IdenticonInput): string | Uint8Array {
+export function seedMaterial(value: Pick<IdenticonInput, "seed">): string | Uint8Array {
   return isPublicKey(value.seed) ? rawPublicKey(value.seed) : value.seed;
 }
