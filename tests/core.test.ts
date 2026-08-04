@@ -83,16 +83,20 @@ describe("systematic visual payload", () => {
   test("uses stars only as an expanded parity code", () => {
     const value = input(sample);
     const expanded = starParityCodeword(value);
+    const parity = payloadParity(value);
+    const payload = seedPayload(value);
 
     expect(expanded.length).toBe(128);
-    expect([...expanded.slice(0, 24)]).toEqual([...payloadParity(value)]);
-    expect([...expanded.slice(0, 40)]).not.toEqual([...seedPayload(value)]);
+    expect([...expanded.slice(0, 24)]).toEqual([...parity]);
+    expect(
+      JSON.stringify([...expanded.slice(0, 40)]) === JSON.stringify([...payload])
+    ).toBe(false);
   });
 
   test("recovers all parity bytes from fifty percent plus one stars", () => {
     const value = input(sample);
     const expanded = starParityCodeword(value);
-    const observations = expanded.map((byte, index) => {
+    const observations = [...expanded].map((byte, index) => {
       const keep = index % 2 === 0 || index === 127;
       return observed(keep ? byte : null);
     });
@@ -106,8 +110,10 @@ describe("systematic visual payload", () => {
     const value = input(sample);
     const payload = seedPayload(value);
     const expanded = starParityCodeword(value);
-    const glyphs = payload.map((byte, index) => observed(index < 16 ? byte : null));
-    const stars = expanded.map((byte, index) => {
+    const glyphs = [...payload].map((byte, index) => {
+      return observed(index < 16 ? byte : null);
+    });
+    const stars = [...expanded].map((byte, index) => {
       const keep = index % 2 === 0 || index === 127;
       return observed(keep ? byte : null);
     });
@@ -238,9 +244,9 @@ describe("builder", () => {
     expect(first).toContain('data-code="reed-solomon-star-parity-128-24-v6"');
     expect(first).toContain('data-code-role="error-correction-disambiguation"');
     expect(first).toContain('data-code-role="parity-disambiguator"');
-    expect(first).not.toContain('data-code-role="complete-identicon-payload"');
-    expect(first).not.toContain("currentColor");
-    expect(first).not.toContain("<style");
-    expect(first).not.toContain("<image");
+    expect(first.includes('data-code-role="complete-identicon-payload"')).toBe(false);
+    expect(first.includes("currentColor")).toBe(false);
+    expect(first.includes("<style")).toBe(false);
+    expect(first.includes("<image")).toBe(false);
   });
 });
