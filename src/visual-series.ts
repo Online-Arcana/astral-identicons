@@ -22,6 +22,7 @@ export interface VisualCaptureSnapshot {
   readonly requiredStars: number;
   readonly centreFound: number;
   readonly ringFound: number;
+  readonly stars: readonly ByteObservation[];
   readonly reading: VisualCodeReading | undefined;
   readonly ready: boolean;
 }
@@ -222,6 +223,7 @@ export class VisualCaptureSeries {
       requiredStars: seedDataByteCount,
       centreFound: this.#centre.filter(Boolean).length,
       ringFound: this.#ring.filter(Boolean).length,
+      stars,
       reading: this.#reading,
       ready: Boolean(this.#reading)
     };

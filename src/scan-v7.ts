@@ -6,6 +6,11 @@ import {
   stopStream
 } from "./camera.ts";
 import {
+  captureObservationTarget,
+  captureReady,
+  recoverCaptured
+} from "./capture-recovery.ts";
+import {
   captureVideo,
   findOuterCircle,
   normaliseCircle,
@@ -244,8 +249,9 @@ function progressMessage(snapshot: VisualCaptureSnapshot): string {
   const useful = (snapshot.usefulMilliseconds / 1_000).toFixed(1);
   return [
     `${useful}s useful capture`,
-    `${snapshot.observedStars}/${seedSlotCount} recovery stars`,
-    `${snapshot.requiredStars} required`,
+    `${snapshot.observedStars}/${seedSlotCount} distinct recovery stars`,
+    `${seedDataByteCount} mathematical minimum`,
+    `${captureObservationTarget} capture target`,
     `${snapshot.centreFound}/9 centre regions`,
     `${snapshot.ringFound}/12 ring regions`
   ].join(" · ");
@@ -346,7 +352,7 @@ export class Scanner {
     const copy = document.querySelector<HTMLElement>(".scan-copy p");
     if (copy) {
       copy.textContent =
-        "Move normally. Every clear star, colour and approved glyph region is saved. Forty reliable stars can reconstruct the complete record. Once enough evidence exists, the camera stops and processing continues from the captured reconstruction.";
+        "Move normally. Every clear star, colour and approved glyph region is saved. Forty reliable stars are the mathematical minimum. The camera freezes after 56 distinct complete observations, or earlier when recovery succeeds, then finishes processing offline.";
     }
 
     this.#close.addEventListener("click", () => this.close());
@@ -586,7 +592,7 @@ export class Scanner {
       });
 
       this.message(progressMessage(snapshot));
-      if (!this.captureEnough(snapshot, frame)) return;
+      if (!this.captureEnough(snapshot)) return;
       await this.processCaptured(snapshot, frame);
     } catch (error) {
       this.processingError(error, true);
@@ -601,7 +607,7 @@ export class Scanner {
     snapshot: VisualCaptureSnapshot
   ): string {
     const saved = snapshot.frames > 0
-      ? ` Progress saved: ${snapshot.observedStars}/${seedSlotCount} recovery stars.`
+      ? ` Progress saved: ${snapshot.observedStars}/${seedSlotCount} distinct recovery stars.`
       : "";
 
     if (quality.sharpness < minimumSharpness) {
@@ -630,20 +636,14 @@ export class Scanner {
     return found;
   }
 
-  private captureEnough(
-    snapshot: VisualCaptureSnapshot,
-    frame: FrameEvidence
-  ): boolean {
-    const reading = snapshot.reading;
-    if (!snapshot.ready || !reading) return false;
-    if (this.capturedRoles().size < 4) return false;
-    if (snapshot.centreFound < 4 || snapshot.ringFound < 4) return false;
-
-    const expectedPalette = seedPaletteIndex(reading.value);
-    return (
-      frame.palette.index === expectedPalette ||
-      frame.palette.confidence < 0.4
-    );
+  private captureEnough(snapshot: VisualCaptureSnapshot): boolean {
+    return captureReady({
+      observedStars: snapshot.observedStars,
+      centreFound: snapshot.centreFound,
+      ringFound: snapshot.ringFound,
+      hasReading: Boolean(snapshot.reading),
+      capturedRoles: this.capturedRoles().size
+    });
   }
 
   private accumulateMosaic(frame: FrameEvidence): void {
@@ -706,13 +706,10 @@ export class Scanner {
     snapshot: VisualCaptureSnapshot,
     current: FrameEvidence
   ): Promise<void> {
-    if (this.#processing || !snapshot.reading) return;
+    if (this.#processing) return;
     this.#processing = true;
     this.#upload.disabled = true;
     const session = this.#session;
-    const reading = snapshot.reading;
-    const value = reading.value;
-    const paletteIndex = seedPaletteIndex(value);
 
     this.freeze(this.#mosaic);
     this.showProgress(8, "Capture complete. Camera stopped. You no longer need to hold it up.");
@@ -720,11 +717,36 @@ export class Scanner {
     await pause(70);
     if (session !== this.#session) return;
 
-    this.showProgress(28, `Reconstructing the complete record from ${reading.observedStars} reliable stars…`);
+    this.showProgress(
+      20,
+      `Resolving ${snapshot.observedStars} distinct stars from the captured evidence…`
+    );
+    await nextPaint();
+
+    const evidence: Array<readonly ByteObservation[]> = [
+      current.stars
+    ];
+    if (this.#bestFrame && this.#bestFrame.canvas !== current.canvas) {
+      evidence.push(this.#bestFrame.stars);
+    }
+    evidence.push(snapshot.stars);
+    evidence.push(observeStarParity(imageData(this.#mosaic), current.palette));
+
+    const reading = snapshot.reading ?? recoverCaptured(evidence);
+    if (!reading) {
+      throw new Error(
+        `Capture stopped correctly with ${snapshot.observedStars} distinct complete stars, but offline reconstruction could not resolve a consistent record. The evidence is frozen; this is a decoder failure, not a request to hold the camera longer.`
+      );
+    }
+
+    const value = reading.value;
+    const paletteIndex = seedPaletteIndex(value);
+
+    this.showProgress(34, `Reconstructing the complete record from ${reading.observedStars} reliable stars…`);
     await nextPaint();
     await pause(40);
 
-    this.showProgress(48, `Reed–Solomon restored ${reading.reconstructedStars} missing or discarded star symbols…`);
+    this.showProgress(50, `Reed–Solomon restored ${reading.reconstructedStars} missing or discarded star symbols…`);
     await nextPaint();
     await pause(40);
 
@@ -863,12 +885,6 @@ export class Scanner {
         centre: frame.quality.centre,
         ring: frame.quality.ring
       });
-
-      if (!snapshot.reading) {
-        throw new Error(
-          `The photo yielded ${snapshot.observedStars}/${seedSlotCount} readable recovery stars; at least ${seedDataByteCount} consistent stars are required`
-        );
-      }
 
       await this.processCaptured(snapshot, frame);
     } finally {

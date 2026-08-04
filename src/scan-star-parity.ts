@@ -24,10 +24,16 @@ interface RankedValue {
   readonly score: number;
 }
 
+interface Point {
+  readonly x: number;
+  readonly y: number;
+}
+
 interface PositionObservation {
   readonly value: number | null;
   readonly confidence: number;
-  readonly point?: { x: number; y: number };
+  readonly point?: Point;
+  readonly observed?: Point;
 }
 
 interface StarProfile {
@@ -53,6 +59,8 @@ interface LevelObservation {
   readonly value: number | null;
   readonly confidence: number;
 }
+
+const distinctStarDistance = 5;
 
 function clamp(value: number, minimum: number, maximum: number): number {
   return Math.max(minimum, Math.min(maximum, value));
@@ -94,13 +102,15 @@ function positionObservation(
     return { value: null, confidence: 0 };
   }
 
-  const observedX = weightedX / total / scale;
-  const observedY = weightedY / total / scale;
+  const observed = {
+    x: weightedX / total / scale,
+    y: weightedY / total / scale
+  };
   const ranked = Array.from({ length: 16 }, (_unused, value) => {
     const point = codeSymbolPoint(slot, value);
     return {
       value,
-      score: Math.hypot(observedX - point.x, observedY - point.y)
+      score: Math.hypot(observed.x - point.x, observed.y - point.y)
     };
   }).sort((left, right) => left.score - right.score);
   const best = ranked[0]!;
@@ -114,20 +124,21 @@ function positionObservation(
   const confidence = distanceConfidence * evidenceConfidence;
 
   if (best.score > 7) {
-    return { value: null, confidence };
+    return { value: null, confidence, observed };
   }
 
   return {
     value: best.value,
     confidence,
-    point: codeSymbolPoint(slot, best.value)
+    point: codeSymbolPoint(slot, best.value),
+    observed
   };
 }
 
 function starProfile(
   image: ImageData,
   palette: ObservedPalette,
-  point: { x: number; y: number },
+  point: Point,
   target: Rgb
 ): StarProfile {
   const scale = image.width / 1024;
@@ -423,6 +434,60 @@ function rawObservation(
   };
 }
 
+function rejected(value: RawStarObservation): RawStarObservation {
+  return {
+    position: {
+      value: null,
+      confidence: value.position.confidence,
+      observed: value.position.observed
+    },
+    profile: undefined,
+    normalisedSize: null,
+    normalisedOpacity: null
+  };
+}
+
+function distinctObservations(
+  values: readonly RawStarObservation[]
+): readonly RawStarObservation[] {
+  const ranked = values
+    .map((value, index) => ({
+      value,
+      index,
+      score: Math.min(
+        value.position.confidence,
+        value.profile?.confidence ?? 0
+      )
+    }))
+    .filter((candidate) => {
+      return Boolean(
+        candidate.value.position.value !== null &&
+        candidate.value.position.observed &&
+        candidate.value.profile
+      );
+    })
+    .sort((left, right) => right.score - left.score);
+  const accepted: Point[] = [];
+  const keep = new Set<number>();
+
+  for (const candidate of ranked) {
+    const observed = candidate.value.position.observed!;
+    const duplicate = accepted.some((point) => {
+      return Math.hypot(observed.x - point.x, observed.y - point.y) <
+        distinctStarDistance;
+    });
+
+    if (duplicate) continue;
+    accepted.push(observed);
+    keep.add(candidate.index);
+  }
+
+  return values.map((value, index) => {
+    if (value.position.value === null || keep.has(index)) return value;
+    return rejected(value);
+  });
+}
+
 function assembleObservation(
   raw: RawStarObservation,
   size: LevelObservation,
@@ -476,9 +541,11 @@ export function observeStarParity(
   palette: ObservedPalette
 ): readonly StarComponentObservation[] {
   const calibration = northCalibration(image, palette);
-  const raw = Array.from({ length: seedSlotCount }, (_unused, slot) => {
-    return rawObservation(image, palette, calibration, slot);
-  });
+  const raw = distinctObservations(
+    Array.from({ length: seedSlotCount }, (_unused, slot) => {
+      return rawObservation(image, palette, calibration, slot);
+    })
+  );
   const sizeCentres = populationCentres(
     raw.map((value) => value.normalisedSize),
     starSizes
