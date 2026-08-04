@@ -1,3 +1,5 @@
+import { paletteNonce } from "./palette-nonce.ts";
+import { paletteDraw } from "./prng.ts";
 import { rsEncode, rsRecoverErasures, rsValid } from "./rs.ts";
 import { signs, type Sign } from "./sign.ts";
 import type { IdenticonInput } from "./types.ts";
@@ -83,7 +85,7 @@ export function seedByteLength(seed: string): number {
 
 export function seedPaletteIndex(seed: string): number {
   seedBytes(seed);
-  return hash32(`astrological-identicon/palette/v5:${seed}`) & 0x3f;
+  return paletteDraw(seed, paletteNonce(seed), paletteCount);
 }
 
 export function canonicalPaletteSeed(index: number): string {
