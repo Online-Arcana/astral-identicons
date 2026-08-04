@@ -2,8 +2,12 @@ import { describe, expect, test } from "bun:test";
 import { codeSymbolPoint } from "../src/code-layout.ts";
 import { input } from "../src/input.ts";
 import type { ObservedPalette } from "../src/scan-colour.ts";
-import { observeStarParitySlot } from "../src/scan-star-parity.ts";
 import {
+  observeStarParity,
+  observeStarParitySlot
+} from "../src/scan-star-parity.ts";
+import {
+  recoverStarParity,
   starParityCodeword,
   starVisualSymbol
 } from "../src/star-parity.ts";
@@ -32,9 +36,9 @@ const palette: ObservedPalette = {
   confidence: 1
 };
 
-function image(): PixelImage {
-  const width = 1024;
-  const height = 1024;
+function image(size = 1024): PixelImage {
+  const width = size;
+  const height = size;
   const data = new Uint8ClampedArray(width * height * 4);
 
   for (let index = 0; index < width * height; index += 1) {
@@ -160,5 +164,32 @@ describe("rendered recovery stars", () => {
     }
 
     expect(tested.length).toBe(4);
+  });
+
+  test("reads enough stars from the complete 512-pixel field to reconstruct", () => {
+    const codeword = starParityCodeword(sample);
+    const pixels = image(512);
+    const scale = pixels.width / 1024;
+
+    for (let slot = 0; slot < codeword.length; slot += 1) {
+      const symbol = starVisualSymbol(codeword[slot]!);
+      const point = codeSymbolPoint(slot, symbol.position);
+      drawStar(
+        pixels,
+        point.x * scale,
+        point.y * scale,
+        symbol.size * scale,
+        symbol.opacity
+      );
+    }
+
+    const observations = observeStarParity(asImageData(pixels), palette);
+    const exact = observations.filter((observation, slot) => {
+      return observation.value === codeword[slot];
+    }).length;
+    const recovered = recoverStarParity(observations);
+
+    expect(exact >= 40).toBe(true);
+    expect(recovered.value).toEqual(sample);
   });
 });
