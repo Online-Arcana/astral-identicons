@@ -227,14 +227,19 @@ export function recoverSeedObservations(
   );
 }
 
+export function observeSeed(
+  image: ImageData,
+  palette: ObservedPalette
+): readonly NibbleObservation[] {
+  return Array.from(
+    { length: seedSlotCount },
+    (_unused, slot) => observeNibble(image, slot, palette)
+  );
+}
+
 export function readSeed(
   image: ImageData,
   palette: ObservedPalette
 ): SeedReading {
-  const observations = Array.from(
-    { length: seedSlotCount },
-    (_unused, slot) => observeNibble(image, slot, palette)
-  );
-
-  return recoverSeedObservations(observations);
+  return recoverSeedObservations(observeSeed(image, palette));
 }
