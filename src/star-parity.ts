@@ -17,6 +17,15 @@ export interface ByteObservation {
   readonly confidence: number;
 }
 
+export interface StarComponentObservation extends ByteObservation {
+  readonly position: number | null;
+  readonly sizeLevel: number | null;
+  readonly opacityLevel: number | null;
+  readonly positionConfidence: number;
+  readonly sizeConfidence: number;
+  readonly opacityConfidence: number;
+}
+
 export interface StarVisualSymbol {
   readonly byte: number;
   readonly position: number;
@@ -48,22 +57,24 @@ interface RecoveryCandidate {
 
 export const starParityDataByteCount = seedDataByteCount;
 export const starParityCodewordByteCount = seedSlotCount;
-export const starParityExpansionByteCount =
-  starParityCodewordByteCount - starParityDataByteCount;
-export const starSizes = [5, 10, 15, 20] as const;
-export const starOpacities = [0.52, 0.68, 0.84, 1] as const;
+export const starParityExpansionByteCount = seedSlotCount;
+export const starParityFullCodewordByteCount =
+  starParityDataByteCount + starParityExpansionByteCount;
+export const starSizes = [8, 14, 20, 26] as const;
+export const starOpacities = [0.7, 0.8, 0.9, 1] as const;
 
-if (starParityExpansionByteCount <= 0) {
-  throw new Error("star recovery code must add redundant bytes");
+if (starParityFullCodewordByteCount > 255) {
+  throw new Error("star parity record exceeds the GF(256) codeword limit");
 }
 
 export function starParityCodeword(value: IdenticonInput): Uint8Array {
-  return rsEncode(seedPayload(value), starParityExpansionByteCount);
+  const full = rsEncode(seedPayload(value), starParityExpansionByteCount);
+  return full.slice(starParityDataByteCount);
 }
 
 export function starVisualSymbol(byte: number): StarVisualSymbol {
   if (!Number.isInteger(byte) || byte < 0 || byte > 255) {
-    throw new Error("star recovery symbol must be one byte");
+    throw new Error("star parity symbol must be one byte");
   }
 
   const position = byte >>> 4;
@@ -78,6 +89,37 @@ export function starVisualSymbol(byte: number): StarVisualSymbol {
     opacityLevel,
     size: starSizes[sizeLevel]!,
     opacity: starOpacities[opacityLevel]!
+  };
+}
+
+export function byteObservation(
+  value: Omit<StarComponentObservation, "value" | "confidence">
+): ByteObservation {
+  if (
+    value.position === null ||
+    value.sizeLevel === null ||
+    value.opacityLevel === null
+  ) {
+    return {
+      value: null,
+      confidence: Math.min(
+        value.positionConfidence,
+        value.sizeConfidence,
+        value.opacityConfidence
+      )
+    };
+  }
+
+  return {
+    value:
+      (value.position << 4) |
+      (value.sizeLevel << 2) |
+      value.opacityLevel,
+    confidence: Math.min(
+      value.positionConfidence,
+      value.sizeConfidence,
+      value.opacityConfidence
+    )
   };
 }
 
@@ -107,9 +149,10 @@ function confidence(
   let total = 0;
   let count = 0;
 
-  for (let index = 0; index < observations.length; index += 1) {
-    const observation = observations[index]!;
-    if (observation.value === null || corrected.has(index)) continue;
+  for (let slot = 0; slot < observations.length; slot += 1) {
+    const observation = observations[slot]!;
+    const position = starParityDataByteCount + slot;
+    if (observation.value === null || corrected.has(position)) continue;
     total += observation.confidence;
     count += 1;
   }
@@ -170,7 +213,7 @@ function generalisedMinimumDistanceRecovery(
   }
 
   if (lastError instanceof Error) throw lastError;
-  throw new Error("The captured star candidates do not form a recoverable record yet");
+  throw new Error("The captured parity stars do not form a recoverable record yet");
 }
 
 export function recoverStarParity(
@@ -178,26 +221,32 @@ export function recoverStarParity(
 ): RecoveredStarRecord {
   validateObservations(observations);
 
-  const damaged = new Uint8Array(starParityCodewordByteCount);
-  const erasures: number[] = [];
+  const damaged = new Uint8Array(starParityFullCodewordByteCount);
+  const erasures: number[] = Array.from(
+    { length: starParityDataByteCount },
+    (_unused, index) => index
+  );
   const ranked: RankedObservation[] = [];
 
-  for (let index = 0; index < observations.length; index += 1) {
-    const observation = observations[index]!;
+  for (let slot = 0; slot < observations.length; slot += 1) {
+    const observation = observations[slot]!;
+    const position = starParityDataByteCount + slot;
 
     if (observation.value === null) {
-      erasures.push(index);
+      erasures.push(position);
       continue;
     }
 
-    damaged[index] = observation.value;
-    ranked.push({ index, confidence: observation.confidence });
+    damaged[position] = observation.value;
+    ranked.push({ index: position, confidence: observation.confidence });
   }
 
-  const observedStars = observations.length - erasures.length;
+  const observedStars = observations.length - (
+    erasures.length - starParityDataByteCount
+  );
   if (observedStars < starParityDataByteCount) {
     throw new Error(
-      `Need at least ${starParityDataByteCount} readable stars; found ${observedStars}`
+      `Need at least ${starParityDataByteCount} readable parity stars; found ${observedStars}`
     );
   }
 
@@ -209,12 +258,15 @@ export function recoverStarParity(
   );
   const bytes = candidate.recovery.codeword.slice(0, starParityDataByteCount);
   const corrected = new Set(candidate.recovery.positions);
+  const reconstructedStars = candidate.recovery.positions.filter((position) => {
+    return position >= starParityDataByteCount;
+  }).length;
 
   return {
     value: candidate.value,
     bytes,
     observedStars,
-    reconstructedStars: candidate.recovery.positions.length,
+    reconstructedStars,
     discardedStars: candidate.recovery.errors + candidate.ignored.length,
     confidence: confidence(observations, corrected)
   };
