@@ -22,6 +22,8 @@ interface VerificationItem {
 export interface SignVerification {
   centreFound: number;
   ringFound: number;
+  rolesFound: number;
+  roleFound: Readonly<Record<Role, boolean>>;
   constellationFound: boolean;
   minimumScore: number;
   complete: boolean;
@@ -36,6 +38,15 @@ const placeholder: IdenticonInput = {
   descendant: "aries",
   imumCoeli: "aries"
 };
+
+const roles: readonly Role[] = [
+  "solar",
+  "lunar",
+  "ascendant",
+  "midheaven",
+  "descendant",
+  "imumCoeli"
+] as const;
 
 const roleMap: Readonly<Record<string, Role>> = {
   Sun: "solar",
@@ -70,13 +81,18 @@ const templateCache = new Map<string, Promise<Float32Array>>();
 const sigilThreshold = 0.055;
 const constellationThreshold = 0.07;
 
+function assetPath(path: string): string {
+  return new URL(path.replace(/^\//u, ""), document.baseURI).href;
+}
+
 function loadVector(path: string): Promise<HTMLImageElement> {
-  let request = vectorCache.get(path);
+  const resolved = assetPath(path);
+  let request = vectorCache.get(resolved);
   if (request) return request;
 
-  request = fetch(path)
+  request = fetch(resolved)
     .then(async (response) => {
-      if (!response.ok) throw new Error(`Could not load verification template: ${path}`);
+      if (!response.ok) throw new Error(`Could not load verification template: ${resolved}`);
       return response.blob();
     })
     .then((blob) => {
@@ -91,20 +107,20 @@ function loadVector(path: string): Promise<HTMLImageElement> {
 
         image.addEventListener("error", () => {
           URL.revokeObjectURL(url);
-          reject(new Error(`Could not decode verification template: ${path}`));
+          reject(new Error(`Could not decode verification template: ${resolved}`));
         }, { once: true });
 
         image.src = url;
       });
     });
 
-  vectorCache.set(path, request);
+  vectorCache.set(resolved, request);
   return request;
 }
 
 function alphaMask(canvas: HTMLCanvasElement): Float32Array {
   const context = canvas.getContext("2d", { willReadFrequently: true });
-  if (!context) throw new Error("Could not access a verification template canvas");
+  if (!context) throw new Error("Could not access a recognition template canvas");
 
   const data = context.getImageData(0, 0, canvas.width, canvas.height).data;
   const result = new Float32Array(canvas.width * canvas.height);
@@ -130,8 +146,8 @@ function template(
 
   request = (async () => {
     const path = kind === "sigil"
-      ? `/assets/sigils/${sign}.svg`
-      : `/assets/constellations/${sign}.svg`;
+      ? `assets/sigils/${sign}.svg`
+      : `assets/constellations/${sign}.svg`;
     const image = await loadVector(path);
     const canvas = document.createElement("canvas");
     canvas.width = dimension;
@@ -306,6 +322,9 @@ export async function verifyExpectedSigns(
     palette,
     value.solar
   );
+  const found = Object.fromEntries(
+    roles.map((role) => [role, false])
+  ) as Record<Role, boolean>;
   let centreFound = 0;
   let ringFound = 0;
   let minimumScore = Number.POSITIVE_INFINITY;
@@ -316,21 +335,22 @@ export async function verifyExpectedSigns(
     minimumScore = Math.min(minimumScore, score);
 
     if (score < sigilThreshold) continue;
+    found[item.role] = true;
     if (item.group === "centre") centreFound += 1;
     else ringFound += 1;
   }
 
   const constellationFound = constellationScore >= constellationThreshold;
+  if (constellationFound) found.solar = true;
+  const rolesFound = roles.filter((role) => found[role]).length;
 
   return {
     centreFound,
     ringFound,
+    rolesFound,
+    roleFound: found,
     constellationFound,
     minimumScore: Number.isFinite(minimumScore) ? minimumScore : 0,
-    complete: (
-      centreFound === 9 &&
-      ringFound === 12 &&
-      constellationFound
-    )
+    complete: rolesFound === roles.length && constellationFound
   };
 }
