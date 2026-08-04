@@ -1,7 +1,6 @@
 export interface PageAssets {
   script: string;
   stylesheet: string;
-  opencv?: string;
 }
 
 const lockedViewport =
@@ -30,18 +29,11 @@ export function page(source: string, assets: PageAssets): string {
     throw new Error("Could not locate the document head");
   }
 
-  const openCv = assets.opencv
-    ? [
-      `  <meta name="opencv-runtime" content="${attribute(assets.opencv)}">`,
-      `  <link rel="preload" as="script" href="${attribute(assets.opencv)}">`
-    ].join("\n") + "\n"
-    : "";
-
   return source
     .replace(lockedViewport, responsiveViewport)
     .replace(
       "</head>",
-      `${openCv}  <link rel="stylesheet" href="${attribute(assets.stylesheet)}">\n</head>`
+      `  <link rel="stylesheet" href="${attribute(assets.stylesheet)}">\n</head>`
     )
     .replace(browserEntry, `src="${attribute(assets.script)}"`);
 }

@@ -73,7 +73,7 @@ bun run palette:tune
 
 ## Camera scanner
 
-The public frontend includes an in-page camera scanner. Camera frames and reconstructed image data stay in the browser and are not uploaded. The browser fetches OpenCV.js to perform the local quality and edge analysis.
+The public frontend includes a fully self-contained in-page camera scanner. Camera frames and reconstructed image data stay in the browser and are not uploaded. The GitHub Pages build does not download, preload or initialise OpenCV, WebAssembly or any other external image-processing runtime.
 
 1. Select **Scan identicon**.
 2. Keep the complete outer circle inside the guide.
@@ -93,8 +93,9 @@ camera autofocus, exposure and white-balance settling
 paired outer-circle detection
     → scale and centre normalisation
 
-OpenCV Canny edges + Laplacian sharpness
-    → blur, contrast, exposure and regional-presence gates
+local TypeScript Gaussian smoothing + Canny-style edge hysteresis
+local Laplacian sharpness + contrast + clipping analysis
+    → blur, exposure and regional-presence gates
 
 observed palette + asymmetric anchors
     → layer order and candidate orientation
@@ -108,6 +109,8 @@ rolling 2–5 second evidence window
 expected constellation + 9 centre glyphs + 12 ring glyphs
     → independent final reconstruction verification
 ```
+
+The scanner does not accept an image because only the circle is visible. The cumulative star payload must decode with its checksum and Reed-Solomon protection, the palette must agree with the recovered seed, and the expected constellation, grid glyphs and ring glyphs must all be present in the reconstructed mosaic.
 
 A shifted camera palette or a low-confidence glyph does not become the final field value. The protected payload resolves it, while the palette and duplicated glyphs help reject incorrect orientation and layer interpretations.
 
@@ -141,7 +144,7 @@ The browser preview and downloaded file use the same `buildIdenticon()` renderer
 
 ## GitHub Pages
 
-The public generator and scanner are deployed as a static site. Visitors do not need Bun or a server-side API.
+The public generator and scanner are deployed as a static site. Visitors do not need Bun, a server-side API or a runtime image-processing download.
 
 1. Open **Settings → Pages**.
 2. Set **Source** to **GitHub Actions**.
@@ -156,6 +159,8 @@ Build the same static artefact locally with:
 ```sh
 bun run build:pages
 ```
+
+The generated application bundle and stylesheet use content-addressed URLs, preventing a previous mobile browser bundle from silently remaining active after a deployment.
 
 ## CLI
 
@@ -194,14 +199,14 @@ config/                  palette target and tuned nonce configuration
 examples/                generated example output
 public/                  responsive web interface
 scripts/
-  build-pages.ts         static-site build
+  build-pages.ts         self-contained static-site build
   tune-palette.ts        exact or nearest palette nonce search
 src/
   build.ts               shared SVG renderer
   camera.ts              bounded high-resolution camera startup
   code-layout.ts         coded-star and registration geometry
   layout.ts              ring and inner-grid geometry
-  opencv.ts              local Canny, blur, exposure and region analysis
+  opencv.ts              dependency-free local edge and quality analysis
   palette.ts             64-entry visual palette codebook
   palette-nonce.ts       nonce selection for every seed
   prng.ts                SHA-256 counter-mode deterministic PRNG
@@ -219,7 +224,7 @@ src/
   server.ts              Bun web server
   web.ts                 browser controls and preview
   xml.ts                 SVG parsing and rewriting
-tests/                   deterministic and recovery tests
+tests/                   deterministic, recovery and deployment-regression tests
 ```
 
 ## Checks

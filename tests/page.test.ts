@@ -12,11 +12,10 @@ const source = `<!doctype html>
 </html>`;
 
 describe("responsive page assets", () => {
-  test("unlocks the viewport and resolves deployable asset paths", () => {
+  test("unlocks the viewport and resolves self-contained asset paths", () => {
     const result = page(source, {
       script: "./app.hash.js",
-      stylesheet: "./responsive.css",
-      opencv: "./vendor/opencv.hash.js"
+      stylesheet: "./responsive.css"
     });
 
     expect(result).toContain(
@@ -27,35 +26,21 @@ describe("responsive page assets", () => {
     expect(result).toContain(
       '<link rel="stylesheet" href="./responsive.css">'
     );
-    expect(result).toContain(
-      '<meta name="opencv-runtime" content="./vendor/opencv.hash.js">'
-    );
-    expect(result).toContain(
-      '<link rel="preload" as="script" href="./vendor/opencv.hash.js">'
-    );
-    expect(result).not.toContain('<script id="opencv-runtime"');
     expect(result).toContain('src="./app.hash.js"');
-  });
-
-  test("keeps OpenCV optional for non-scanner pages", () => {
-    const result = page(source, {
-      script: "/app.js",
-      stylesheet: "/responsive.css"
-    });
-
     expect(result).not.toContain("opencv-runtime");
+    expect(result).not.toContain("opencv.js");
+    expect(result).not.toContain("cdn");
   });
 
   test("escapes generated asset attributes", () => {
     const result = page(source, {
       script: './app.js?x="bad"&y=1',
-      stylesheet: "./responsive.css",
-      opencv: "./vendor/opencv.js?x=1&y=2"
+      stylesheet: "./responsive.css?x=1&y=2"
     });
 
     expect(result).toContain('src="./app.js?x=&quot;bad&quot;&amp;y=1"');
     expect(result).toContain(
-      'content="./vendor/opencv.js?x=1&amp;y=2"'
+      'href="./responsive.css?x=1&amp;y=2"'
     );
   });
 
