@@ -8,13 +8,6 @@ import {
   innerClipRadius
 } from "./code-layout.ts";
 import {
-  glyphCarrierDigits,
-  glyphCarriers,
-  glyphMark,
-  glyphMarkHaloStroke,
-  glyphMarkStroke
-} from "./glyph-code.ts";
-import {
   canvas,
   centre,
   innerRingRadius,
@@ -24,7 +17,7 @@ import {
   ringStroke
 } from "./layout.ts";
 import { palette } from "./palette.ts";
-import { hash32, seedDataByteCount, seedPaletteIndex, seedSlotCount } from "./seed.ts";
+import { hash32, seedPaletteIndex, seedSlotCount } from "./seed.ts";
 import {
   starParityCodeword,
   starParityDataByteCount,
@@ -109,7 +102,7 @@ function registrationStars(
     .join("\n");
 }
 
-function parityStars(
+function recoveryStars(
   value: IdenticonInput,
   asset: ReturnType<typeof parseSvg>,
   colour: string,
@@ -121,9 +114,9 @@ function parityStars(
   for (let slot = 0; slot < codeword.length; slot += 1) {
     const symbol = starVisualSymbol(codeword[slot]!);
     const { x, y } = codeSymbolPoint(slot, symbol.position);
-    const style = hash32(`astrological-identicon/parity-star/v6:${slot}`);
+    const style = hash32(`astrological-identicon/recovery-star/v7:${slot}`);
     const rotation = (style >>> 16) % 360;
-    const body = starBody(asset, colour, `parity-star-${slot}`);
+    const body = starBody(asset, colour, `recovery-star-${slot}`);
     const haloRadius = symbol.size / 2 + codeStarHaloPadding;
     const halo = `<circle cx="${x}" cy="${y}" r="${haloRadius}" fill="${background}" opacity="0.94"/>`;
 
@@ -134,7 +127,7 @@ function parityStars(
         data-code-position="${symbol.position.toString(16).toUpperCase()}"
         data-code-size-level="${symbol.sizeLevel}"
         data-code-opacity-level="${symbol.opacityLevel}"
-        data-code-role="parity-disambiguator"
+        data-code-role="record-recovery"
         opacity="${symbol.opacity}"
       >${halo}${placedSvg(
         body,
@@ -151,45 +144,10 @@ function parityStars(
   return result.join("\n");
 }
 
-function glyphData(value: IdenticonInput, colour: string, background: string): string {
-  return glyphCarriers(value).map((carrier) => {
-    const digits = glyphCarrierDigits(value, carrier);
-    const marks = digits.map((digit, index) => {
-      const actual = glyphMark(carrier, index, digit);
-
-      return `<g data-glyph-mark="${index}" data-glyph-digit="${digit}">
-        <line
-          x1="${actual.startX}"
-          y1="${actual.startY}"
-          x2="${actual.endX}"
-          y2="${actual.endY}"
-          stroke="${background}"
-          stroke-width="${glyphMarkHaloStroke}"
-          stroke-linecap="round"
-        />
-        <line
-          x1="${actual.startX}"
-          y1="${actual.startY}"
-          x2="${actual.endX}"
-          y2="${actual.endY}"
-          stroke="${colour}"
-          stroke-width="${glyphMarkStroke}"
-          stroke-linecap="round"
-        />
-      </g>`;
-    }).join("\n");
-
-    return `<g
-      data-glyph-carrier="${carrier.index}"
-      data-carrier-key="${carrier.key}"
-      data-carrier-group="${carrier.group}"
-      data-byte-offset="${carrier.byteOffset}"
-      data-code-role="systematic-payload-data"
-    >${marks}</g>`;
-  }).join("\n");
-}
-
-export async function buildIdenticon(value: IdenticonInput, assets: AssetSource): Promise<string> {
+export async function buildIdenticon(
+  value: IdenticonInput,
+  assets: AssetSource
+): Promise<string> {
   const paletteIndex = seedPaletteIndex(value);
   const colours = palette(value);
 
@@ -203,14 +161,9 @@ export async function buildIdenticon(value: IdenticonInput, assets: AssetSource)
   const starSource = await assets.star();
   const starAsset = parseSvg(starSource);
   const anchorLayer = registrationStars(starAsset, colours.layer0.reduced);
-  const parityLayer = parityStars(
+  const recoveryLayer = recoveryStars(
     value,
     starAsset,
-    colours.layer1.reduced,
-    colours.background.reduced
-  );
-  const glyphDataLayer = glyphData(
-    value,
     colours.layer1.reduced,
     colours.background.reduced
   );
@@ -219,7 +172,6 @@ export async function buildIdenticon(value: IdenticonInput, assets: AssetSource)
     ...placements(value).map((item) => item.sign),
     ...ringPlacements(value).map((item) => item.sign)
   ]);
-
   const sigils = new Map<Sign, ReturnType<typeof parseSvg>>();
 
   await Promise.all(
@@ -276,9 +228,9 @@ export async function buildIdenticon(value: IdenticonInput, assets: AssetSource)
   const data = escapeXml(JSON.stringify(value));
 
   return `<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="${canvas}" height="${canvas}" viewBox="0 0 ${canvas} ${canvas}" role="img" aria-label="${escapeXml(title)}" data-input="${data}" data-palette-index="${paletteIndex}" data-code-version="6">
+<svg xmlns="http://www.w3.org/2000/svg" width="${canvas}" height="${canvas}" viewBox="0 0 ${canvas} ${canvas}" role="img" aria-label="${escapeXml(title)}" data-input="${data}" data-palette-index="${paletteIndex}" data-code-version="7">
   <title>${escapeXml(title)}</title>
-  <metadata>Generated deterministically by astrological-identicon. Glyph carriers contain the systematic payload data. The star field contains expanded Reed-Solomon parity used only to repair and disambiguate incomplete glyph reads.</metadata>
+  <metadata>Generated deterministically by astrological-identicon. The approved constellation, grid, ring, palette and stars are the complete visual grammar. The 128-star Reed-Solomon recovery record reconstructs the exact 40-byte identity and signs from any 40 reliable star observations; the constellation, grid, ring and palette independently verify the result.</metadata>
   <defs>
     <clipPath id="inner-clip">
       <circle cx="${centre}" cy="${centre}" r="${innerClipRadius}"/>
@@ -324,19 +276,20 @@ export async function buildIdenticon(value: IdenticonInput, assets: AssetSource)
   </g>
 
   <g
-    id="parity-stars"
-    data-code="reed-solomon-star-parity-128-24-v6"
-    data-code-role="error-correction-disambiguation"
+    id="recovery-stars"
+    data-code="reed-solomon-star-record-128-40-v7"
+    data-code-role="record-recovery"
     data-code-slots="${seedSlotCount}"
     data-code-source-bytes="${starParityDataByteCount}"
     data-code-expansion-bytes="${starParityExpansionByteCount}"
+    data-code-minimum-readable-stars="${starParityDataByteCount}"
     data-code-tracks="${codeTrackCount}"
     data-code-sectors="${codeSectorCount}"
     data-code-colour="layer1"
     data-code-symbol-spacing="${codeSymbolSpacing}"
     clip-path="url(#inner-clip)"
   >
-    ${parityLayer}
+    ${recoveryLayer}
   </g>
 
   <g id="ring-system">
@@ -359,17 +312,6 @@ export async function buildIdenticon(value: IdenticonInput, assets: AssetSource)
       stroke-width="${ringStroke}"
     />
     ${ringSigils}
-  </g>
-
-  <g
-    id="glyph-data"
-    data-code="systematic-glyph-payload-40-v6"
-    data-code-role="primary-identicon-data"
-    data-code-data-bytes="${seedDataByteCount}"
-    data-code-carriers="20"
-    data-code-marks-per-carrier="8"
-  >
-    ${glyphDataLayer}
   </g>
 </svg>
 `;
