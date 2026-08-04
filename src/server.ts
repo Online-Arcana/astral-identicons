@@ -11,7 +11,8 @@ const assets = fileAssets(assetsRoot);
 const sourceIndex = await Bun.file(`${root}/public/index.html`).text();
 const index = page(sourceIndex, {
   script: "/app.js",
-  stylesheet: "/responsive.css"
+  stylesheet: "/responsive.css",
+  opencv: "https://docs.opencv.org/4.x/opencv.js"
 });
 const responsiveStyle = await Bun.file(`${root}/public/responsive.css`).text();
 const build = await Bun.build({
