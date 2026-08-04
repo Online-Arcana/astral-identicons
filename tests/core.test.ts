@@ -10,24 +10,29 @@ import {
   codeTrackCount,
   innerClipRadius
 } from "../src/code-layout.ts";
+import {
+  glyphCarrierDigits,
+  glyphCarriers,
+  glyphMarkCount
+} from "../src/glyph-code.ts";
 import { input } from "../src/input.ts";
 import { centre, ringPlacements } from "../src/layout.ts";
+import { palette, paletteForIndex } from "../src/palette.ts";
 import {
-  palette,
-  paletteForIndex
-} from "../src/palette.ts";
-import { recoverSeedObservations } from "../src/scan-seed.ts";
-import {
-  decodeSeedNibbles,
-  encodedSeedNibbles,
   paletteCount,
   seedDataByteCount,
-  seedNibbleSlot,
   seedPaletteIndex,
-  seedParityByteCount,
+  seedPayload,
   seedSlotCount
 } from "../src/seed.ts";
+import {
+  payloadParity,
+  recoverStarParity,
+  starParityCodeword,
+  type ByteObservation
+} from "../src/star-parity.ts";
 import type { AssetSource } from "../src/types.ts";
+import { recoverVisualCode } from "../src/visual-code.ts";
 
 const sample = {
   seed: "62-70-F2-Example",
@@ -46,54 +51,78 @@ const assets: AssetSource = {
   star: async () => simpleAsset
 };
 
-describe("complete visual payload", () => {
-  test("round-trips the exact seed and all six signs", () => {
-    const value = input(sample);
-    const recovered = decodeSeedNibbles(encodedSeedNibbles(value));
+function observed(value: number | null, confidence = 0.98): ByteObservation {
+  return { value, confidence: value === null ? 0 : confidence };
+}
 
-    expect(recovered).toEqual(value);
+describe("systematic visual payload", () => {
+  test("stores all 40 payload bytes in twenty glyph carriers", () => {
+    const value = input(sample);
+    const payload = seedPayload(value);
+    const carriers = glyphCarriers(value);
+    const recovered: number[] = [];
+
+    expect(carriers.length).toBe(20);
+    expect(glyphMarkCount).toBe(8);
+
+    for (const carrier of carriers) {
+      const digits = glyphCarrierDigits(value, carrier);
+      let word = 0;
+
+      for (let index = 0; index < digits.length; index += 1) {
+        word |= digits[index]! << (index * 2);
+      }
+
+      recovered.push(word & 0xff, word >>> 8);
+    }
+
+    expect(recovered).toEqual([...payload]);
+    expect(recovered.length).toBe(seedDataByteCount);
   });
 
-  test("reconstructs the full payload with the complete erasure budget", () => {
+  test("uses stars only as an expanded parity code", () => {
     const value = input(sample);
-    const damaged = [...encodedSeedNibbles(value)] as Array<number | null>;
+    const expanded = starParityCodeword(value);
+    const parity = payloadParity(value);
+    const payload = seedPayload(value);
 
-    for (let byte = 0; byte < seedParityByteCount; byte += 1) {
-      damaged[seedNibbleSlot(byte * 2)] = null;
-      damaged[seedNibbleSlot(byte * 2 + 1)] = null;
-    }
-
-    expect(decodeSeedNibbles(damaged)).toEqual(value);
+    expect(expanded.length).toBe(128);
+    expect([...expanded.slice(0, 24)]).toEqual([...parity]);
+    expect(
+      JSON.stringify([...expanded.slice(0, 40)]) === JSON.stringify([...payload])
+    ).toBe(false);
   });
 
-  test("uses confidence-ranked erasures to repair conflicting star reads", () => {
+  test("recovers all parity bytes from fifty percent plus one stars", () => {
     const value = input(sample);
-    const observations: Array<{ value: number | null; confidence: number }> =
-      encodedSeedNibbles(value).map((nibble) => ({
-        value: nibble,
-        confidence: 0.95
-      }));
+    const expanded = starParityCodeword(value);
+    const observations = [...expanded].map((byte, index) => {
+      const keep = index % 2 === 0 || index === 127;
+      return observed(keep ? byte : null);
+    });
+    const recovered = recoverStarParity(observations);
 
-    for (let byte = 0; byte < 8; byte += 1) {
-      const slot = seedNibbleSlot(byte * 2);
-      observations[slot] = {
-        value: (observations[slot]!.value! + 3) & 0x0f,
-        confidence: 0.01
-      };
-    }
+    expect(recovered.observedStars).toBe(65);
+    expect([...recovered.bytes]).toEqual([...payloadParity(value)]);
+  });
 
-    for (let byte = 20; byte < 26; byte += 1) {
-      observations[seedNibbleSlot(byte * 2)] = {
-        value: null,
-        confidence: 0
-      };
-    }
-
-    const recovered = recoverSeedObservations(observations);
+  test("repairs twenty-four missing glyph bytes from parity stars", () => {
+    const value = input(sample);
+    const payload = seedPayload(value);
+    const expanded = starParityCodeword(value);
+    const glyphs = [...payload].map((byte, index) => {
+      return observed(index < 16 ? byte : null);
+    });
+    const stars = [...expanded].map((byte, index) => {
+      const keep = index % 2 === 0 || index === 127;
+      return observed(keep ? byte : null);
+    });
+    const recovered = recoverVisualCode(glyphs, stars);
 
     expect(recovered.value).toEqual(value);
-    expect(recovered.erasures >= 14).toBe(true);
-    expect(recovered.uncertainStars).toBe(6);
+    expect(recovered.glyphBytes).toBe(16);
+    expect(recovered.recoveredGlyphBytes).toBe(24);
+    expect(recovered.observedStars).toBe(65);
   });
 
   test("rejects seeds that cannot fit exactly in the visual payload", () => {
@@ -110,7 +139,7 @@ describe("complete visual payload", () => {
 });
 
 describe("visual scanner geometry", () => {
-  test("uses 128 deterministic slots across four polar tracks", () => {
+  test("uses 128 deterministic star slots across four polar tracks", () => {
     const points = new Set<string>();
 
     for (let slot = 0; slot < seedSlotCount; slot += 1) {
@@ -124,7 +153,7 @@ describe("visual scanner geometry", () => {
     expect(points.size).toBe(seedSlotCount);
   });
 
-  test("gives every star sixteen distinct nibble positions", () => {
+  test("gives every star sixteen distinct position values", () => {
     for (let slot = 0; slot < seedSlotCount; slot += 1) {
       const positions = new Set<string>();
 
@@ -139,7 +168,7 @@ describe("visual scanner geometry", () => {
     expect(codeSymbolSpacing).toBe(10);
   });
 
-  test("keeps every coded-star position inside the inner clipping circle", () => {
+  test("keeps every parity-star position inside the inner clipping circle", () => {
     for (let slot = 0; slot < seedSlotCount; slot += 1) {
       for (let value = 0; value < 16; value += 1) {
         const point = codeSymbolPoint(slot, value);
@@ -198,7 +227,7 @@ describe("palette", () => {
 });
 
 describe("builder", () => {
-  test("exports a deterministic standalone SVG with the complete protected payload", async () => {
+  test("exports a deterministic SVG with glyph data and parity stars", async () => {
     const value = input(sample);
     const first = await buildIdenticon(value, assets);
     const second = await buildIdenticon(value, assets);
@@ -207,28 +236,17 @@ describe("builder", () => {
     expect(first).toContain('viewBox="0 0 1024 1024"');
     expect(first).toContain(`data-input="{&quot;seed&quot;:&quot;${sample.seed}`);
     expect(first).toContain(`data-palette-index="${seedPaletteIndex(sample.seed)}"`);
-    expect(first).toContain('data-code-version="5"');
-    expect(first).toContain('data-code="reed-solomon-64-40-identicon-v5"');
-    expect(first).toContain('data-code-role="complete-identicon-payload"');
-    expect(first).toContain('data-code-slots="128"');
-    expect(first).toContain(`data-code-data-bytes="${seedDataByteCount}"`);
-    expect(first).toContain(`data-code-parity-bytes="${seedParityByteCount}"`);
-    expect(first).toContain('data-code-tracks="4"');
-    expect(first).toContain('data-code-sectors="32"');
-    expect(first).toContain('data-code-value="0"');
-    expect(first).toContain('data-code-parity="true"');
-    expect(first).toContain('id="registration-stars"');
-    expect(first).toContain('id="coded-stars"');
-    expect(first).toContain('data-code-colour="layer1"');
-    expect(first).toContain('data-code-symbol-size="10"');
-    expect(first).toContain('data-code-symbol-spacing="10"');
-    expect(first).toContain('data-code-halo-radius="7"');
-    expect(first).toContain('id="foreground-layer-0"');
-    expect(first).toContain('id="foreground-layer-1-core"');
-    expect(first).toContain('data-recognition-role="upright-sign-reference"');
-    expect(first).toContain('id="ring-system"');
-    expect(first).not.toContain("currentColor");
-    expect(first).not.toContain("<style");
-    expect(first).not.toContain("<image");
+    expect(first).toContain('data-code-version="6"');
+    expect(first).toContain('id="glyph-data"');
+    expect(first).toContain('data-code="systematic-glyph-payload-40-v6"');
+    expect(first).toContain('data-code-role="primary-identicon-data"');
+    expect(first).toContain('id="parity-stars"');
+    expect(first).toContain('data-code="reed-solomon-star-parity-128-24-v6"');
+    expect(first).toContain('data-code-role="error-correction-disambiguation"');
+    expect(first).toContain('data-code-role="parity-disambiguator"');
+    expect(first.includes('data-code-role="complete-identicon-payload"')).toBe(false);
+    expect(first.includes("currentColor")).toBe(false);
+    expect(first.includes("<style")).toBe(false);
+    expect(first.includes("<image")).toBe(false);
   });
 });

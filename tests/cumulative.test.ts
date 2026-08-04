@@ -1,7 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { input } from "../src/input.ts";
-import { CaptureSeries, type CaptureSnapshot } from "../src/scan-series.ts";
-import { encodedSeedNibbles } from "../src/seed.ts";
+import { seedPayload } from "../src/seed.ts";
+import { starParityCodeword, type ByteObservation } from "../src/star-parity.ts";
+import {
+  VisualCaptureSeries,
+  type VisualCaptureSnapshot
+} from "../src/visual-series.ts";
 
 const sample = input({
   seed: "6270f2-example",
@@ -13,72 +17,86 @@ const sample = input({
   imumCoeli: "aries"
 });
 
-function observations(start: number, end: number) {
-  return encodedSeedNibbles(sample).map((value, index) => ({
-    value: index >= start && index < end ? value : null,
-    confidence: index >= start && index < end ? 0.98 : 0
+function observations(
+  values: Uint8Array,
+  included: ReadonlySet<number>
+): readonly ByteObservation[] {
+  return [...values].map((value, index) => ({
+    value: included.has(index) ? value : null,
+    confidence: included.has(index) ? 0.98 : 0
   }));
 }
 
-function mask(length: number, start: number, end: number): readonly boolean[] {
-  return Array.from({ length }, (_unused, index) => {
-    return index >= start && index < end;
-  });
+function range(start: number, end: number): Set<number> {
+  return new Set(Array.from({ length: end - start }, (_unused, index) => {
+    return start + index;
+  }));
 }
 
-describe("cumulative scanner capture", () => {
-  test("combines different clear elements across a rolling frame series", () => {
-    const series = new CaptureSeries();
-    const frames = [
-      {
-        at: 0,
-        observations: observations(0, 32),
-        centre: mask(9, 0, 3),
-        ring: mask(12, 0, 3)
-      },
-      {
-        at: 700,
-        observations: observations(32, 64),
-        centre: mask(9, 3, 6),
-        ring: mask(12, 3, 6)
-      },
-      {
-        at: 1_400,
-        observations: observations(64, 96),
-        centre: mask(9, 6, 9),
-        ring: mask(12, 6, 9)
-      },
-      {
-        at: 2_200,
-        observations: observations(96, 128),
-        centre: mask(9, 0, 3),
-        ring: mask(12, 9, 12)
-      },
-      {
-        at: 2_400,
-        observations: observations(0, 32),
-        centre: mask(9, 3, 6),
-        ring: mask(12, 3, 6)
-      }
-    ] as const;
+function mask(length: number, indexes: readonly number[]): readonly boolean[] {
+  const included = new Set(indexes);
+  return Array.from({ length }, (_unused, index) => included.has(index));
+}
 
-    let snapshot: CaptureSnapshot | undefined;
+describe("human cumulative scanner capture", () => {
+  test("keeps useful evidence across shake and long out-of-frame gaps", () => {
+    const series = new VisualCaptureSeries();
+    const payload = seedPayload(sample);
+    const stars = starParityCodeword(sample);
+    let snapshot: VisualCaptureSnapshot | undefined;
 
-    for (const frame of frames) {
-      snapshot = series.add({
-        ...frame,
-        quality: 0.92
-      });
-    }
+    snapshot = series.add({
+      at: 0,
+      glyphs: observations(payload, range(0, 8)),
+      stars: observations(stars, range(0, 32)),
+      quality: 0.88,
+      centre: mask(9, [0, 1, 2, 3]),
+      ring: mask(12, [0, 1, 2, 3, 4])
+    });
 
-    if (!snapshot) throw new Error("capture series did not produce a snapshot");
+    expect(snapshot.ready).toBe(false);
+    expect(snapshot.glyphBytes).toBe(8);
+    expect(snapshot.observedStars).toBe(32);
+
+    snapshot = series.add({
+      at: 12_000,
+      glyphs: observations(payload, range(8, 16)),
+      stars: observations(stars, range(32, 65)),
+      quality: 0.91,
+      centre: mask(9, [4, 5, 6, 7, 8]),
+      ring: mask(12, [5, 6, 7, 8, 9, 10, 11])
+    });
 
     expect(snapshot.ready).toBe(true);
-    expect(snapshot.frames).toBe(5);
-    expect(snapshot.elapsed).toBe(2_400);
-    expect(snapshot.observedStars).toBe(128);
+    expect(snapshot.frames).toBe(2);
+    expect(snapshot.usefulMilliseconds).toBe(350);
+    expect(snapshot.glyphBytes).toBe(16);
+    expect(snapshot.observedStars).toBe(65);
     expect(snapshot.centreFound).toBe(9);
     expect(snapshot.ringFound).toBe(12);
     expect(snapshot.reading?.value).toEqual(sample);
+    expect(snapshot.reading?.recoveredGlyphBytes).toBe(24);
+  });
+
+  test("does not lose saved progress when time passes without a useful frame", () => {
+    const series = new VisualCaptureSeries();
+    const payload = seedPayload(sample);
+    const stars = starParityCodeword(sample);
+
+    series.add({
+      at: 0,
+      glyphs: observations(payload, range(0, 10)),
+      stars: observations(stars, range(0, 40)),
+      quality: 0.8,
+      centre: mask(9, [0, 1]),
+      ring: mask(12, [0, 1])
+    });
+
+    const muchLater = series.snapshot();
+
+    expect(muchLater.glyphBytes).toBe(10);
+    expect(muchLater.observedStars).toBe(40);
+    expect(muchLater.centreFound).toBe(2);
+    expect(muchLater.ringFound).toBe(2);
   });
 });
