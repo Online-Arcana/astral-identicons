@@ -4,7 +4,7 @@ export type SeedKind = "text" | "ed25519";
 
 export interface IdenticonInput {
   seed: string;
-  seedKind: SeedKind;
+  seedKind?: SeedKind;
   solar: Sign;
   lunar: Sign;
   ascendant: Sign;
