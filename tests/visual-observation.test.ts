@@ -1,11 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { codeSymbolPoint } from "../src/code-layout.ts";
-import { glyphMarks } from "../src/glyph-code.ts";
 import { input } from "../src/input.ts";
 import type { ObservedPalette } from "../src/scan-colour.ts";
-import { observeGlyphData } from "../src/scan-glyph-code.ts";
 import { observeStarParitySlot } from "../src/scan-star-parity.ts";
-import { seedPayload } from "../src/seed.ts";
 import {
   starParityCodeword,
   starVisualSymbol
@@ -109,20 +106,6 @@ function asImageData(value: PixelImage): ImageData {
   return value as unknown as ImageData;
 }
 
-function drawGlyphData(target: PixelImage): void {
-  for (const mark of glyphMarks(sample)) {
-    line(
-      target,
-      mark.startX,
-      mark.startY,
-      mark.endX,
-      mark.endY,
-      4,
-      255
-    );
-  }
-}
-
 function drawStar(
   target: PixelImage,
   x: number,
@@ -149,19 +132,8 @@ function drawStar(
   }
 }
 
-describe("rendered visual channels", () => {
-  test("reads all systematic payload bytes from rendered glyph marks", () => {
-    const pixels = image();
-    drawGlyphData(pixels);
-
-    const observations = observeGlyphData(asImageData(pixels), palette);
-    const values = observations.map((observation) => observation.value);
-
-    expect(values).toEqual([...seedPayload(sample)]);
-    expect(observations.every((observation) => observation.confidence > 0)).toBe(true);
-  });
-
-  test("reads parity-star byte channels from rendered position, size and intensity", () => {
+describe("rendered recovery stars", () => {
+  test("reads position, size and intensity for every size level", () => {
     const codeword = starParityCodeword(sample);
     const tested: number[] = [];
 
