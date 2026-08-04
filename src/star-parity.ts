@@ -17,7 +17,7 @@ export interface ByteObservation {
   readonly confidence: number;
 }
 
-export interface StarComponentObservation {
+export interface StarComponentObservation extends ByteObservation {
   readonly position: number | null;
   readonly sizeLevel: number | null;
   readonly opacityLevel: number | null;
@@ -93,7 +93,7 @@ export function starVisualSymbol(byte: number): StarVisualSymbol {
 }
 
 export function byteObservation(
-  value: StarComponentObservation
+  value: Omit<StarComponentObservation, "value" | "confidence">
 ): ByteObservation {
   if (
     value.position === null ||
