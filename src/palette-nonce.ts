@@ -1,4 +1,4 @@
-import configuration from "../config/palette-targets.json" with { type: "json" };
+import configuration from "../config/palette-targets.json";
 import { defaultNonce } from "./prng.ts";
 
 interface PaletteTarget {
