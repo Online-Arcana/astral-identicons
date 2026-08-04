@@ -6,9 +6,11 @@ import {
 import {
   colourEvidence,
   pixel,
-  type ObservedPalette
+  type ObservedPalette,
+  type Rgb
 } from "./scan-colour.ts";
 import {
+  byteObservation,
   starOpacities,
   starSizes,
   type StarComponentObservation
@@ -115,7 +117,8 @@ function positionObservation(
 function starProfile(
   image: ImageData,
   palette: ObservedPalette,
-  point: { x: number; y: number }
+  point: { x: number; y: number },
+  target: Rgb
 ): StarProfile {
   const scale = image.width / 1024;
   const centreX = point.x * scale;
@@ -132,7 +135,7 @@ function starProfile(
         evidence: colourEvidence(
           pixel(image, centreX + offsetX, centreY + offsetY),
           palette.background,
-          palette.layer1
+          target
         ),
         distance
       });
@@ -168,7 +171,12 @@ function northCalibration(
   image: ImageData,
   palette: ObservedPalette
 ): StarCalibration {
-  const reference = starProfile(image, palette, northStarPoint());
+  const reference = starProfile(
+    image,
+    palette,
+    northStarPoint(),
+    palette.layer0
+  );
   const sizeScale = reference.size / northStar.size;
   const opacityScale = reference.opacity / northStar.opacity;
   const sizeConfidence = clamp(1 - Math.abs(sizeScale - 1) / 0.55, 0, 1);
@@ -225,6 +233,8 @@ function observeStar(
   const position = positionObservation(image, palette, slot);
   if (position.value === null || !position.point) {
     return {
+      value: null,
+      confidence: position.confidence,
       position: null,
       sizeLevel: null,
       opacityLevel: null,
@@ -234,20 +244,31 @@ function observeStar(
     };
   }
 
-  const profile = starProfile(image, palette, position.point);
+  const profile = starProfile(
+    image,
+    palette,
+    position.point,
+    palette.layer1
+  );
   const normalisedSize = profile.size / calibration.sizeScale;
   const normalisedOpacity = profile.opacity / calibration.opacityScale;
   const size = orderedLevel(normalisedSize, starSizes, 3.2);
   const opacity = orderedLevel(normalisedOpacity, starOpacities, 0.085);
   const profileConfidence = Math.min(profile.confidence, calibration.confidence);
-
-  return {
+  const components = {
     position: position.value,
     sizeLevel: size.value,
     opacityLevel: opacity.value,
     positionConfidence: position.confidence,
     sizeConfidence: size.confidence * profileConfidence,
     opacityConfidence: opacity.confidence * profileConfidence
+  };
+  const combined = byteObservation(components);
+
+  return {
+    ...components,
+    value: combined.value,
+    confidence: combined.confidence
   };
 }
 
