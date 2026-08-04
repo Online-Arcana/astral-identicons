@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 
 async function scannerSource(): Promise<string> {
-  return Bun.file(new URL("../src/scan-v8.ts", import.meta.url)).text();
+  const path = new URL("../src/scan-v8.ts", import.meta.url).pathname;
+  return Bun.file(path).text();
 }
 
 describe("resilient scanner state machine", () => {
