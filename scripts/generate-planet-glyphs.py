@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Extract Unicode planetary glyph outlines and emit deterministic SVG paths.
+"""Extract the real Unicode planetary outlines and emit deterministic SVG paths.
 
-This script does not redraw or approximate symbols. It reads the actual outline
-from Noto Sans Symbols / Noto Sans Symbols 2 with FontTools' SVGPathPen.
+No symbol is hand drawn. By default the script downloads two exact Noto font
+files from one immutable upstream commit, caches them outside Git, and traces
+their contours with FontTools' SVGPathPen.
 """
 
 from __future__ import annotations
@@ -11,7 +12,7 @@ import argparse
 import hashlib
 import json
 import re
-import subprocess
+import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -21,12 +22,26 @@ try:
     from fontTools.ttLib import TTFont
 except ImportError as error:
     raise SystemExit(
-        "FontTools is required. Install it with: python3 -m pip install fonttools==4.63.0"
+        "FontTools is required. Install it with: "
+        "python3 -m pip install -r scripts/planet-glyph-requirements.txt"
     ) from error
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "src" / "planet.ts"
 OUTPUT = ROOT / "src" / "planet-glyph-paths.ts"
+CACHE = ROOT / ".cache" / "planet-glyph-fonts"
+NOTO_COMMIT = "ffebf8c1ee449e544955a7e813c54f9b73848eac"
+RAW = f"https://raw.githubusercontent.com/notofonts/noto-fonts/{NOTO_COMMIT}/hinted/ttf"
+PINNED_FONTS = {
+    "Noto Sans Symbols": (
+        f"{RAW}/NotoSansSymbols/NotoSansSymbols-Regular.ttf",
+        CACHE / "NotoSansSymbols-Regular.ttf",
+    ),
+    "Noto Sans Symbols 2": (
+        f"{RAW}/NotoSansSymbols2/NotoSansSymbols2-Regular.ttf",
+        CACHE / "NotoSansSymbols2-Regular.ttf",
+    ),
+}
 
 PLANET_PATTERN = re.compile(
     r'\{\s*key:\s*"(?P<key>[^"]+)",\s*glyph:\s*"(?P<glyph>[^"]+)",'
@@ -34,20 +49,24 @@ PLANET_PATTERN = re.compile(
 SUN_PATTERN = re.compile(r'calibrationSunGlyph\s*=\s*"(?P<glyph>[^"]+)"')
 
 
-def font_path(family: str) -> Path:
-    result = subprocess.run(
-        ["fc-match", "-f", "%{file}", family],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    path = Path(result.stdout.strip())
-    if not path.is_file():
-        raise SystemExit(f"Could not resolve a font file for {family}")
-    return path
+def download(url: str, destination: Path) -> Path:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if destination.is_file() and destination.stat().st_size > 0:
+        return destination
+
+    temporary = destination.with_suffix(destination.suffix + ".part")
+    with urllib.request.urlopen(url, timeout=60) as response:
+        temporary.write_bytes(response.read())
+    temporary.replace(destination)
+    return destination
 
 
-def trace(font: TTFont, font_file: Path, family: str, unicode_glyph: str) -> dict[str, Any] | None:
+def trace(
+    font: TTFont,
+    font_file: Path,
+    family: str,
+    unicode_glyph: str,
+) -> dict[str, Any] | None:
     cmap = font.getBestCmap() or {}
     glyph_name = cmap.get(ord(unicode_glyph))
     if glyph_name is None:
@@ -56,8 +75,8 @@ def trace(font: TTFont, font_file: Path, family: str, unicode_glyph: str) -> dic
     glyph_set = font.getGlyphSet()
     glyph = glyph_set[glyph_name]
     path_pen = SVGPathPen(glyph_set)
-    glyph.draw(path_pen)
     bounds_pen = BoundsPen(glyph_set)
+    glyph.draw(path_pen)
     glyph.draw(bounds_pen)
     if bounds_pen.bounds is None:
         raise SystemExit(f"Glyph {unicode_glyph!r} has no vector outline")
@@ -75,6 +94,7 @@ def trace(font: TTFont, font_file: Path, family: str, unicode_glyph: str) -> dic
         "maxX": max_x,
         "maxY": max_y,
         "font": family,
+        "fontCommit": NOTO_COMMIT,
         "fontSha256": hashlib.sha256(font_file.read_bytes()).hexdigest(),
     }
 
@@ -90,6 +110,7 @@ def emit(planets: dict[str, dict[str, Any]], sun: dict[str, Any]) -> str:
         "  readonly maxX: number;",
         "  readonly maxY: number;",
         "  readonly font: string;",
+        "  readonly fontCommit: string;",
         "  readonly fontSha256: string;",
         "}",
         "",
@@ -116,20 +137,31 @@ def main() -> None:
     parser.add_argument("--symbols", type=Path)
     parser.add_argument("--symbols2", type=Path)
     parser.add_argument("--output", type=Path, default=OUTPUT)
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="fail when the committed generated module is not current",
+    )
     arguments = parser.parse_args()
 
-    symbols_file = arguments.symbols or font_path("Noto Sans Symbols")
-    symbols2_file = arguments.symbols2 or font_path("Noto Sans Symbols 2")
-    fonts = [
-        ("Noto Sans Symbols", symbols_file, TTFont(symbols_file)),
-        ("Noto Sans Symbols 2", symbols2_file, TTFont(symbols2_file)),
-    ]
+    explicit = {
+        "Noto Sans Symbols": arguments.symbols,
+        "Noto Sans Symbols 2": arguments.symbols2,
+    }
+    fonts: list[tuple[str, Path, TTFont]] = []
+    for family, (url, cached) in PINNED_FONTS.items():
+        path = explicit[family] or download(url, cached)
+        if not path.is_file():
+            raise SystemExit(f"Font file does not exist: {path}")
+        fonts.append((family, path, TTFont(path)))
 
     source = SOURCE.read_text(encoding="utf-8")
     planet_sources = PLANET_PATTERN.findall(source)
     sun_match = SUN_PATTERN.search(source)
     if len(planet_sources) != 11 or sun_match is None:
-        raise SystemExit("Could not read the eleven planets and calibration Sun from src/planet.ts")
+        raise SystemExit(
+            "Could not read the eleven planets and calibration Sun from src/planet.ts"
+        )
 
     def extract(unicode_glyph: str) -> dict[str, Any]:
         if len(unicode_glyph) != 1:
@@ -138,14 +170,28 @@ def main() -> None:
             result = trace(font, path, family, unicode_glyph)
             if result is not None:
                 return result
-        raise SystemExit(f"No configured font contains {unicode_glyph!r}")
+        raise SystemExit(f"No pinned font contains {unicode_glyph!r}")
 
     planets = {key: extract(glyph) for key, glyph in planet_sources}
     sun = extract(sun_match.group("glyph"))
     output = emit(planets, sun)
+
+    if arguments.check:
+        current = arguments.output.read_text(encoding="utf-8") \
+            if arguments.output.is_file() else ""
+        if current != output:
+            raise SystemExit(
+                "src/planet-glyph-paths.ts is stale; run: "
+                "python3 scripts/generate-planet-glyphs.py"
+            )
+        print("Planet glyph SVG paths match the pinned Unicode font outlines")
+        return
+
     arguments.output.parent.mkdir(parents=True, exist_ok=True)
     arguments.output.write_text(output, encoding="utf-8")
-    print(f"Generated {arguments.output.relative_to(ROOT)} from Unicode font outlines")
+    print(
+        f"Generated {arguments.output.relative_to(ROOT)} from pinned Unicode font outlines"
+    )
 
 
 if __name__ == "__main__":
