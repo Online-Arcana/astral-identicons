@@ -33,7 +33,7 @@ export const planetLocalStateCount =
   planetDensityLevelCount *
   satelliteConfigurationCount;
 
-export function planetAnchorGroupSize(group: number): number {
+function validGroup(group: number): void {
   if (
     !Number.isInteger(group) ||
     group < 0 ||
@@ -43,23 +43,39 @@ export function planetAnchorGroupSize(group: number): number {
       `planet anchor group must be between 0 and ${planetAnchorGroupCount - 1}`
     );
   }
-  return group < 16 ? 11 : 10;
+}
+
+/**
+ * Sixteen groups expose eleven micro-anchors and eight expose ten. The
+ * eleven-anchor groups deliberately avoid macro indices ending in 3 so the
+ * deterministic omission pattern in layout-v9 always names a real point.
+ */
+export function planetAnchorGroupSize(group: number): number {
+  validGroup(group);
+  return group < 21 && group % 4 !== 3 ? 11 : 10;
 }
 
 export function planetAnchorGroupStart(group: number): number {
-  planetAnchorGroupSize(group);
-  return group < 16
-    ? group * 11
-    : 16 * 11 + (group - 16) * 10;
+  validGroup(group);
+  let start = 0;
+  for (let index = 0; index < group; index += 1) {
+    start += planetAnchorGroupSize(index);
+  }
+  return start;
 }
 
 export function planetAnchorGroup(anchor: number): number {
   if (!Number.isInteger(anchor) || anchor < 0 || anchor >= planetAnchorCount) {
     throw new Error(`planet anchor must be between 0 and ${planetAnchorCount - 1}`);
   }
-  return anchor < 176
-    ? Math.floor(anchor / 11)
-    : 16 + Math.floor((anchor - 176) / 10);
+
+  let start = 0;
+  for (let group = 0; group < planetAnchorGroupCount; group += 1) {
+    const end = start + planetAnchorGroupSize(group);
+    if (anchor < end) return group;
+    start = end;
+  }
+  throw new Error("planet anchor group lookup exceeded the v9 anchor field");
 }
 
 export function planetAnchorPosition(anchor: number): number {
@@ -80,11 +96,14 @@ export function planetAnchor(group: number, position: number): number {
 if (planetCount !== 11) {
   throw new Error("v9 requires exactly eleven identity-bearing planetary glyphs");
 }
-if (
-  Array.from({ length: planetAnchorGroupCount }, (_unused, group) => {
-    return planetAnchorGroupSize(group);
-  }).reduce((sum, size) => sum + size, 0) !== planetAnchorCount
-) {
+const groupSizes = Array.from(
+  { length: planetAnchorGroupCount },
+  (_unused, group) => planetAnchorGroupSize(group)
+);
+if (groupSizes.filter((size) => size === 11).length !== 16) {
+  throw new Error("v9 requires exactly sixteen eleven-anchor groups");
+}
+if (groupSizes.reduce((sum, size) => sum + size, 0) !== planetAnchorCount) {
   throw new Error("v9 separated planetary groups must expose exactly 256 anchors");
 }
 if (planetLocalStateCount !== 51_840) {
