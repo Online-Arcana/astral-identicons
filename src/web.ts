@@ -21,6 +21,9 @@ const fields = [
   ["imumCoeli", "Imum Coeli"]
 ] as const;
 
+const svgNamespace = "http://www.w3.org/2000/svg";
+const previewClipId = "astral-preview-circle-clip";
+
 function randomByte(limit: number): number {
   const maximum = Math.floor(256 / limit) * limit;
   const buffer = new Uint8Array(1);
@@ -82,6 +85,8 @@ previewPanel.style.justifyItems = "center";
 preview.style.inlineSize = "min(100%, 70vmin, 32rem)";
 preview.style.maxInlineSize = "100%";
 preview.style.marginInline = "auto";
+preview.style.background = "transparent";
+preview.style.borderColor = "transparent";
 paletteHost.style.inlineSize = "100%";
 
 const assetCache = new Map<string, Promise<string>>();
@@ -215,6 +220,57 @@ function showPalette(valuePalette: ReturnType<typeof palette>): void {
   }
 }
 
+function circularPreviewClip(
+  documentValue: XMLDocument,
+  root: SVGSVGElement
+): void {
+  const viewBox = root.getAttribute("viewBox")
+    ?.trim()
+    .split(/[\s,]+/u)
+    .map(Number);
+  if (
+    !viewBox ||
+    viewBox.length !== 4 ||
+    viewBox.some((value) => !Number.isFinite(value)) ||
+    viewBox[2]! <= 0 ||
+    viewBox[3]! <= 0
+  ) {
+    throw new Error("Generated SVG has an invalid viewBox");
+  }
+
+  const [x, y, width, height] = viewBox as [number, number, number, number];
+  let defs = Array.from(root.children).find((child) => child.localName === "defs");
+  if (!defs) {
+    defs = documentValue.createElementNS(svgNamespace, "defs");
+    root.prepend(defs);
+  }
+
+  const clip = documentValue.createElementNS(svgNamespace, "clipPath");
+  clip.setAttribute("id", previewClipId);
+  clip.setAttribute("clipPathUnits", "userSpaceOnUse");
+
+  const circle = documentValue.createElementNS(svgNamespace, "circle");
+  circle.setAttribute("cx", String(x + width / 2));
+  circle.setAttribute("cy", String(y + height / 2));
+  circle.setAttribute("r", String(Math.min(width, height) / 2));
+  clip.append(circle);
+  defs.append(clip);
+
+  const layer = documentValue.createElementNS(svgNamespace, "g");
+  layer.setAttribute("clip-path", `url(#${previewClipId})`);
+  for (const child of Array.from(root.children)) {
+    if (
+      child === defs ||
+      child.localName === "title" ||
+      child.localName === "metadata"
+    ) {
+      continue;
+    }
+    layer.append(child);
+  }
+  root.append(layer);
+}
+
 function showSvg(source: string): void {
   const documentValue = new DOMParser().parseFromString(source, "image/svg+xml");
   const error = documentValue.querySelector("parsererror");
@@ -222,6 +278,7 @@ function showSvg(source: string): void {
 
   const root = documentValue.documentElement;
   if (root.localName !== "svg") throw new Error("Generated output is not an SVG document");
+  circularPreviewClip(documentValue, root as unknown as SVGSVGElement);
   preview.replaceChildren(document.importNode(root, true));
 }
 
