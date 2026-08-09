@@ -78,14 +78,6 @@ button {
   max-width: 32rem;
 }
 
-/*
- * Firefox can let SVG paint escape a rounded parent's overflow clip. Crop the
- * SVG itself as well so the preview remains circular across browser engines.
- */
-.preview > svg {
-  clip-path: circle(50% at 50% 50%);
-}
-
 .preview > svg,
 .scan-stage video,
 canvas,
