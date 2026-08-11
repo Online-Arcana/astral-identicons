@@ -11,7 +11,7 @@
     "glyphs:generate": "python3 scripts/generate-planet-glyphs.py",
     "glyphs:check": "python3 scripts/generate-planet-glyphs.py --check",
     "build:pages": "bun run scripts/build-pages.ts",
-    "test": "bun test",
+    "test": "bun test ./tests",
     "check": "tsc --noEmit"
   },
   "devDependencies": {
