@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - agent/fix-v9-pristine-roundtrip
+      - agent/split-modules
   pull_request:
     branches:
       - main
