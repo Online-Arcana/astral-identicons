@@ -12,13 +12,10 @@ describe("fresh page identity", () => {
     expect(source.includes("new Uint8Array(16)")).toBe(false);
   });
 
-  test("randomises every sign field on initial page construction", () => {
-    expect(source).toContain("const defaults = randomInput()");
-    expect(source).toContain("solar: randomSign()");
-    expect(source).toContain("lunar: randomSign()");
-    expect(source).toContain("ascendant: randomSign()");
-    expect(source).toContain("midheaven: randomSign()");
-    expect(source).toContain("descendant: randomSign()");
-    expect(source).toContain("imumCoeli: randomSign()");
+  test("builds a deterministic TEST-only chart for the initial preview", () => {
+    expect(source).toContain("const defaultPreview = testChartPreview(randomPublicKey())");
+    expect(source).toContain("let activeTestWheel: PublicWheelMeta | null = defaultPreview.wheel");
+    expect(source).toContain("const generated = testChartPreview(randomPublicKey())");
+    expect(source).toContain("buildIdenticon(data, browserAssets, resolvedWheel.wheel)");
   });
 });

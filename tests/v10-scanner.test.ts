@@ -1,7 +1,12 @@
 import { describe, expect, test } from "bun:test";
+import { v9StarCalibrationLevel } from "../src/calibration-v9.ts";
 import {
   rotateV10Point,
+  v10CalibrationStarFadingOpacities,
+  v10CalibrationStarRadius,
+  v10CalibrationStarSizes,
   v10Canvas,
+  v10Centre,
   v10OuterRingRadius,
   v10ParityAnchorPoint,
   v10ParityStarSizes,
@@ -9,6 +14,7 @@ import {
 } from "../src/layout-v10.ts";
 import { v9ParityVisualState } from "../src/parity-v9.ts";
 import { v9Parity } from "../src/record-v9.ts";
+import { observeV10Calibration } from "../src/scan-v10-calibration.ts";
 import { detectV10OuterCircle } from "../src/scan-v10-cv.ts";
 import { observeV10Orientation } from "../src/scan-v10-orientation.ts";
 import { observeV10Parity } from "../src/scan-v10-parity.ts";
@@ -73,6 +79,14 @@ function disc(
   }
 }
 
+function calibrationPoint(index: number): { x: number; y: number } {
+  const angle = index * 30 * Math.PI / 180;
+  return {
+    x: v10Centre + Math.sin(angle) * v10CalibrationStarRadius,
+    y: v10Centre - Math.cos(angle) * v10CalibrationStarRadius
+  };
+}
+
 function starImage(angle = 0): ImageData {
   const size = 512;
   const background = 12;
@@ -95,6 +109,24 @@ function starImage(angle = 0): ImageData {
       point.x * scale,
       point.y * scale,
       v10ParityStarSizes[state.size]! * scale / 2,
+      value
+    );
+  }
+
+  for (let index = 0; index < 12; index += 1) {
+    const level = v9StarCalibrationLevel(index);
+    const point = rotateV10Point(calibrationPoint(index), angle);
+    const value = blend(
+      background,
+      foreground,
+      v10CalibrationStarFadingOpacities[level]!
+    );
+    disc(
+      data,
+      size,
+      point.x * scale,
+      point.y * scale,
+      v10CalibrationStarSizes[level]! * scale / 2,
       value
     );
   }
@@ -133,7 +165,22 @@ describe("v10 parity-only scanner", () => {
     expect(observed.confidence).toBeGreaterThan(0.10);
   });
 
-  test("maps the v10 field back through the unchanged v9 star classifier", () => {
+  test("measures the restored circumference size and fading references", () => {
+    const calibration = observeV10Calibration(starImage());
+    expect(calibration.confidence).toBeGreaterThan(0.9);
+    expect(calibration.starSizeCentres).toHaveLength(6);
+    expect(calibration.fadingCentres).toHaveLength(6);
+    for (let level = 1; level < 6; level += 1) {
+      expect(calibration.starSizeCentres[level]!).toBeGreaterThan(
+        calibration.starSizeCentres[level - 1]!
+      );
+      expect(calibration.fadingCentres[level]!).toBeGreaterThan(
+        calibration.fadingCentres[level - 1]!
+      );
+    }
+  });
+
+  test("maps the v10 field back through the calibrated v9 star classifier", () => {
     const parity = observeV10Parity(starImage());
     expect(parity).toHaveLength(128);
     expect(parity.some((value) => value.value !== null)).toBe(true);

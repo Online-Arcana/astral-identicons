@@ -102,7 +102,7 @@ function count(source: string, expression: RegExp): number {
 }
 
 describe("v10 chart-wheel identicon", () => {
-  test("renders the natal wheel with only constellation art and RS stars in the aspect area", async () => {
+  test("renders the natal wheel with the expanded identicon field and fixed calibration stars", async () => {
     const svg = await buildIdenticon(sample, assets, wheel);
 
     expect(svg).toContain('data-visual-version="10"');
@@ -111,10 +111,18 @@ describe("v10 chart-wheel identicon", () => {
     expect(svg).toContain('id="wheel-houses"');
     expect(svg).toContain('id="wheel-points"');
     expect(svg).toContain('id="identicon-aspect-overlay"');
+    expect(svg).toContain('data-overlay-radius="272"');
     expect(svg).toContain('id="solar-constellation"');
     expect(svg).toContain('id="reed-solomon-stars"');
     expect(svg).toContain('data-code="reed-solomon-168-40-parity-stars-128-v10"');
     expect(count(svg, /data-parity-index=/gu)).toBe(128);
+
+    expect(svg).toContain('id="calibration-stars-v10"');
+    expect(svg).toContain('data-calibration-radius="389"');
+    expect(svg).toContain('data-calibration-pattern="6,1,5,2,4,3,6,3,4,2,5,1"');
+    expect(count(svg, /data-calibration-reference="true"/gu)).toBe(12);
+    expect(svg).toContain('id="north-star-reference"');
+    expect(svg).toContain('id="south-star-reference"');
 
     expect(svg).not.toContain('id="planetary-identity-v9"');
     expect(svg).not.toContain('data-planet-index=');
@@ -132,6 +140,7 @@ describe("v10 chart-wheel identicon", () => {
     expect(svg).toContain('data-visual-version="10"');
     expect(svg).toContain('id="wheel-zodiac"');
     expect(svg).toContain('id="identicon-aspect-overlay"');
+    expect(svg).toContain('id="calibration-stars-v10"');
     expect(svg).not.toContain('id="wheel-houses"');
     expect(svg).not.toContain('wheel-point-');
   });

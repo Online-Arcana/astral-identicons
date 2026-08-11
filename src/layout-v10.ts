@@ -1,5 +1,6 @@
 import {
   parityAnchorPoint,
+  parityFadingOpacities,
   parityStarSizes,
   v9InnerClipRadius
 } from "./layout-v9.ts";
@@ -14,13 +15,17 @@ export const v10Centre = v10Canvas / 2;
 export const v10OuterRingRadius = 372;
 export const v10ZodiacInnerRadius = 316;
 export const v10AspectRadius = 210;
-export const v10OverlayRadius = v10AspectRadius - 8;
+export const v10PointBaseRadius = 286;
+export const v10OverlayRadius = v10PointBaseRadius - 14;
 export const v10OverlayScale = v10OverlayRadius / v9InnerClipRadius;
 export const v10RingRatio = v10ZodiacInnerRadius / v10OuterRingRadius;
+export const v10CalibrationStarRadius = 389;
 
 export const v10ParityStarSizes = parityStarSizes.map((size) => {
   return size * v10OverlayScale;
 }) as readonly number[];
+export const v10CalibrationStarSizes = v10ParityStarSizes;
+export const v10CalibrationStarFadingOpacities = parityFadingOpacities;
 
 export function v10ParityAnchorPoint(group: number, position: number): V10Point {
   const source = parityAnchorPoint(group, position);

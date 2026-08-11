@@ -1,3 +1,4 @@
+import type { PublicWheelMeta } from "../vendor/astral-chart-wheel/dist/index.js";
 import {
   astralSource,
   boundAstralWheel
@@ -13,6 +14,7 @@ import {
   isPublicKey
 } from "./seed-value.ts";
 import { label, signs, type Sign } from "./sign.ts";
+import { testChartPreview } from "./test-wheel.ts";
 import type { AssetSource, IdenticonInput } from "./types.ts";
 
 const fields = [
@@ -27,38 +29,24 @@ const fields = [
 const svgNamespace = "http://www.w3.org/2000/svg";
 const previewClipId = "astral-preview-circle-clip";
 
-function randomByte(limit: number): number {
-  const maximum = Math.floor(256 / limit) * limit;
-  const buffer = new Uint8Array(1);
-
-  while (true) {
-    crypto.getRandomValues(buffer);
-    const value = buffer[0]!;
-    if (value < maximum) return value % limit;
-  }
-}
-
-function randomSign(): Sign {
-  return signs[randomByte(signs.length)]!;
-}
-
 function randomPublicKey(): string {
   return base64Url(crypto.getRandomValues(new Uint8Array(32)));
 }
 
-function randomInput(): IdenticonInput {
-  return {
-    seed: randomPublicKey(),
-    solar: randomSign(),
-    lunar: randomSign(),
-    ascendant: randomSign(),
-    midheaven: randomSign(),
-    descendant: randomSign(),
-    imumCoeli: randomSign()
-  };
+function identityKey(value: IdenticonInput): string {
+  return [
+    value.seed,
+    value.solar,
+    value.lunar,
+    value.ascendant,
+    value.midheaven,
+    value.descendant,
+    value.imumCoeli
+  ].join("|");
 }
 
-const defaults = randomInput();
+const defaultPreview = testChartPreview(randomPublicKey());
+const defaults = defaultPreview.input;
 const form = document.querySelector<HTMLFormElement>("#builder")!;
 const astralWrap = document.createElement("div");
 const astralLabel = document.createElement("label");
@@ -97,6 +85,8 @@ let renderVersion = 0;
 let latestSvg = "";
 let assetsWarmed = false;
 let activeRaw: Uint8Array | undefined;
+let activeTestWheel: PublicWheelMeta | null = defaultPreview.wheel;
+let activeTestKey = identityKey(defaults);
 
 for (const [name, title] of fields) {
   const wrapper = document.createElement("div");
@@ -147,6 +137,25 @@ function apply(input: IdenticonInput): void {
   for (const [name] of fields) {
     form.querySelector<HTMLSelectElement>(`#${name}`)!.value = input[name];
   }
+}
+
+function previewWheel(value: IdenticonInput): {
+  readonly wheel: PublicWheelMeta | null;
+  readonly source: "astral" | "legacy-astral" | "test" | "none";
+} {
+  const astralWheel = boundAstralWheel(value);
+  if (astralWheel !== undefined) {
+    return {
+      wheel: astralWheel,
+      source: astralWheel === null ? "legacy-astral" : "astral"
+    };
+  }
+
+  if (activeTestWheel !== null && activeTestKey === identityKey(value)) {
+    return { wheel: activeTestWheel, source: "test" };
+  }
+
+  return { wheel: null, source: "none" };
 }
 
 function assetPath(path: string): string {
@@ -300,7 +309,8 @@ async function render(): Promise<void> {
   status.textContent = "Building preview...";
   status.className = "status";
 
-  const svg = await buildIdenticon(data, browserAssets);
+  const resolvedWheel = previewWheel(data);
+  const svg = await buildIdenticon(data, browserAssets, resolvedWheel.wheel);
   if (version !== renderVersion) return;
 
   latestSvg = svg;
@@ -309,11 +319,14 @@ async function render(): Promise<void> {
 
   const paletteIndex = seedPaletteIndex(data);
   const seedLabel = isPublicKey(data.seed) ? "32-byte public key" : "exact seed";
-  const natalWheel = boundAstralWheel(data);
-  const wheelCopy = natalWheel
+  const wheelCopy = resolvedWheel.source === "astral"
     ? "The public deterministic natal wheel supplies its houses and real chart points; aspect lines are replaced by the identicon field."
-    : "No natal wheel metadata is attached, so the preview uses the chart-wheel shell without inventing houses or planetary positions.";
-  status.textContent = `The ${seedLabel} and all six signs are protected across ${seedSlotCount} Reed–Solomon stars; any ${seedDataByteCount} reliable stars can reconstruct the complete record. Palette ${paletteIndex.toString(16).padStart(2, "0").toUpperCase()} colours the wheel. The Solar constellation and Reed–Solomon field occupy the normal aspect area. ${wheelCopy}`;
+    : resolvedWheel.source === "test"
+      ? "The front-end test generator supplies deterministic TEST-ONLY wheel geometry so houses and chart glyph positions are exercised in the preview. Imported .astral files never use this fixture."
+      : resolvedWheel.source === "legacy-astral"
+        ? "This older packaged chart has no public natal-wheel metadata, so no chart positions are invented."
+        : "No natal wheel metadata is attached, so the preview uses the chart-wheel shell without inventing houses or planetary positions.";
+  status.textContent = `The ${seedLabel} and all six signs are protected across ${seedSlotCount} Reed–Solomon stars; any ${seedDataByteCount} reliable stars can reconstruct the complete record. Palette ${paletteIndex.toString(16).padStart(2, "0").toUpperCase()} colours the wheel. The Solar constellation and Reed–Solomon field fill the chart's aspect-line area. ${wheelCopy}`;
   status.className = "status";
 }
 
@@ -350,6 +363,8 @@ const scanner = new Scanner({
 
 form.addEventListener("input", (event) => {
   astralFile.value = "";
+  activeTestWheel = null;
+  activeTestKey = "";
   if (event.target === seedField) {
     activeRaw = undefined;
   }
@@ -360,6 +375,8 @@ astralFile.addEventListener("change", () => {
   const selected = astralFile.files?.[0];
   if (!selected) return;
 
+  activeTestWheel = null;
+  activeTestKey = "";
   status.textContent = "Reading packaged astral header locally...";
   status.className = "status";
   let loadedWheel = false;
@@ -382,9 +399,11 @@ scan.addEventListener("click", () => {
 });
 
 randomButton.addEventListener("click", () => {
-  activeRaw = undefined;
-  seedField.value = randomPublicKey();
+  const generated = testChartPreview(randomPublicKey());
+  activeTestWheel = generated.wheel;
+  activeTestKey = identityKey(generated.input);
   astralFile.value = "";
+  apply(generated.input);
   schedule();
 });
 
@@ -404,7 +423,8 @@ form.addEventListener("submit", async (event) => {
 
   try {
     const data = value();
-    const svg = await buildIdenticon(data, browserAssets);
+    const resolvedWheel = previewWheel(data);
+    const svg = await buildIdenticon(data, browserAssets, resolvedWheel.wheel);
     latestSvg = svg;
 
     const blob = new Blob([latestSvg], {

@@ -3,6 +3,7 @@ import {
   v10Centre,
   v10OverlayScale
 } from "./layout-v10.ts";
+import { observeV10Calibration } from "./scan-v10-calibration.ts";
 import {
   observeV9Parity,
   type V9ParityObservation
@@ -73,5 +74,6 @@ export function expandV10ParityImage(image: ImageData): ImageData {
 export function observeV10Parity(
   image: ImageData
 ): readonly V9ParityObservation[] {
-  return observeV9Parity(expandV10ParityImage(image));
+  const calibration = observeV10Calibration(image);
+  return observeV9Parity(expandV10ParityImage(image), calibration);
 }
