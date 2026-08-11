@@ -91,6 +91,7 @@ preview.style.marginInline = "auto";
 preview.style.background = "transparent";
 preview.style.borderColor = "transparent";
 paletteHost.style.inlineSize = "100%";
+save.disabled = true;
 
 const assetCache = new Map<string, Promise<string>>();
 let renderVersion = 0;
@@ -287,6 +288,10 @@ function showSvg(source: string): void {
   preview.replaceChildren(document.importNode(root, true));
 }
 
+function missingWheelMessage(): string {
+  return "Load an ASTRPKG5 .astral file to render the current chart-wheel identicon. A public key and six signs alone do not contain the deterministic house cusps or planetary longitudes, so this page will not fabricate a wheel from them.";
+}
+
 async function render(): Promise<void> {
   const version = ++renderVersion;
   const data = value();
@@ -294,26 +299,35 @@ async function render(): Promise<void> {
   if (!data.seed) {
     latestSvg = "";
     preview.replaceChildren();
+    save.disabled = true;
     return;
   }
 
-  status.textContent = "Building preview...";
+  const natalWheel = boundAstralWheel(data);
+  showPalette(palette(data));
+
+  if (!natalWheel) {
+    latestSvg = "";
+    preview.replaceChildren();
+    save.disabled = true;
+    status.textContent = missingWheelMessage();
+    status.className = "status";
+    return;
+  }
+
+  status.textContent = "Building chart-wheel preview...";
   status.className = "status";
 
-  const svg = await buildIdenticon(data, browserAssets);
+  const svg = await buildIdenticon(data, browserAssets, natalWheel);
   if (version !== renderVersion) return;
 
   latestSvg = svg;
   showSvg(svg);
-  showPalette(palette(data));
+  save.disabled = false;
 
   const paletteIndex = seedPaletteIndex(data);
   const seedLabel = isPublicKey(data.seed) ? "32-byte public key" : "exact seed";
-  const natalWheel = boundAstralWheel(data);
-  const wheelCopy = natalWheel
-    ? "The public deterministic natal wheel supplies its houses and real chart points; aspect lines are replaced by the identicon field."
-    : "No natal wheel metadata is attached, so the preview uses the chart-wheel shell without inventing houses or planetary positions.";
-  status.textContent = `The ${seedLabel} and all six signs are protected across ${seedSlotCount} Reed–Solomon stars; any ${seedDataByteCount} reliable stars can reconstruct the complete record. Palette ${paletteIndex.toString(16).padStart(2, "0").toUpperCase()} colours the wheel. The Solar constellation and Reed–Solomon field occupy the normal aspect area. ${wheelCopy}`;
+  status.textContent = `The ${seedLabel} and all six signs are protected across ${seedSlotCount} Reed–Solomon stars; any ${seedDataByteCount} reliable stars can reconstruct the complete record. Palette ${paletteIndex.toString(16).padStart(2, "0").toUpperCase()} colours the real natal chart wheel. The Solar constellation and Reed–Solomon field replace the normal aspect lines while the deterministic houses and chart points remain in their calculated positions.`;
   status.className = "status";
 }
 
@@ -342,7 +356,10 @@ const scanner = new Scanner({
 
     void render().then(() => {
       const recovered = isPublicKey(result.seed) ? "public key" : "exact seed";
-      status.textContent = `Camera recovered the ${recovered} "${result.seed}" and all six signs from ${result.cumulativeFrames} useful capture${result.cumulativeFrames === 1 ? "" : "s"}. ${recoverySummary(result.reconstructedStars)}`;
+      const wheelCopy = boundAstralWheel(result)
+        ? "The matching deterministic natal wheel is available for preview."
+        : "The Reed–Solomon record does not contain natal longitudes; load the corresponding ASTRPKG5 .astral file to render the chart wheel.";
+      status.textContent = `Camera recovered the ${recovered} "${result.seed}" and all six signs from ${result.cumulativeFrames} useful capture${result.cumulativeFrames === 1 ? "" : "s"}. ${recoverySummary(result.reconstructedStars)} ${wheelCopy}`;
       status.className = "status";
     }).catch(showError);
   }
@@ -371,7 +388,7 @@ astralFile.addEventListener("change", () => {
   }).then(() => {
     status.textContent = loadedWheel
       ? "Loaded the exact raw Ed25519 public key, six signs and public deterministic natal wheel from the packaged astral file. The encrypted payload was not opened or changed."
-      : "Loaded the exact raw Ed25519 public key and all six signs from the packaged astral file. This older container has no public natal-wheel metadata, so no chart positions were invented. The encrypted payload was not opened or changed.";
+      : "Loaded the exact raw Ed25519 public key and all six signs from the packaged astral file. This older container has no public natal-wheel metadata, so the current chart-wheel identicon cannot be rendered. The encrypted payload was not opened or changed.";
     status.className = "status";
   }).catch(showError);
 });
@@ -404,7 +421,10 @@ form.addEventListener("submit", async (event) => {
 
   try {
     const data = value();
-    const svg = await buildIdenticon(data, browserAssets);
+    const natalWheel = boundAstralWheel(data);
+    if (!natalWheel) throw new Error(missingWheelMessage());
+
+    const svg = await buildIdenticon(data, browserAssets, natalWheel);
     latestSvg = svg;
 
     const blob = new Blob([latestSvg], {
@@ -418,13 +438,11 @@ form.addEventListener("submit", async (event) => {
     link.click();
 
     window.setTimeout(() => URL.revokeObjectURL(url), 0);
-    status.textContent = isPublicKey(data.seed)
-      ? "Saved standalone chart-wheel SVG with the exact recoverable public key and signs."
-      : "Saved standalone chart-wheel SVG with the exact recoverable seed and signs.";
+    status.textContent = "Saved standalone chart-wheel SVG with the exact recoverable public key, signs and deterministic natal wheel.";
   } catch (error) {
     showError(error);
   } finally {
-    save.disabled = false;
+    save.disabled = !boundAstralWheel(value());
   }
 });
 

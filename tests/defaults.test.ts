@@ -21,4 +21,13 @@ describe("fresh page identity", () => {
     expect(source).toContain("descendant: randomSign()");
     expect(source).toContain("imumCoeli: randomSign()");
   });
+
+  test("does not present a wheel-less v10 shell as a finished identicon", () => {
+    expect(source).toContain("const natalWheel = boundAstralWheel(data)");
+    expect(source).toContain("if (!natalWheel)");
+    expect(source).toContain("preview.replaceChildren()");
+    expect(source).toContain("save.disabled = true");
+    expect(source).toContain("Load an ASTRPKG5 .astral file to render the current chart-wheel identicon");
+    expect(source).not.toContain("the preview uses the chart-wheel shell without inventing houses or planetary positions");
+  });
 });
