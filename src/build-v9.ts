@@ -1,7 +1,5 @@
-import {
-  renderAstralIdenticonV9,
-  type AstralIdenticonPlanetState
-} from "../vendor/astral-chart-wheel/dist/index.js";
+import { renderAstralIdenticonV9 } from "./legacy/renderer/identiconV9.ts";
+import type { AstralIdenticonPlanetState } from "./legacy/renderer/identiconTypes.ts";
 import { palette } from "./palette.ts";
 import { planetaryConfiguration } from "./planet-code.ts";
 import { calibrationSunGlyph, planetaryGlyphs } from "./planet.ts";

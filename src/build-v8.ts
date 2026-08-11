@@ -1,7 +1,5 @@
-import {
-  renderAstralIdenticonV8,
-  type AstralIdenticonV8RecoveryStar
-} from "../vendor/astral-chart-wheel/dist/index.js";
+import { renderAstralIdenticonV8 } from "./legacy/renderer/identiconV8.ts";
+import type { AstralIdenticonV8RecoveryStar } from "./legacy/renderer/identiconTypes.ts";
 import {
   codeSectorCount,
   codeSymbolPoint,
