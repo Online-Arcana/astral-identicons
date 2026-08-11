@@ -67,12 +67,12 @@ jobs:
 
           bun install --frozen-lockfile
           bun run check
-          bun test
+          bun run test
           bun run build:pages
 
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add src/legacy/renderer/identiconV10.ts src/legacy/renderer/identiconTypes.ts src/build-v10.ts src/layout.ts
+          git add src/legacy/renderer/identiconV10.ts src/legacy/renderer/identiconTypes.ts src/build-v10.ts src/layout.ts package.json .github/workflows/verify-pristine-roundtrip.yml
           git rm .github/workflows/tmp-reclaim-legacy-renderers.yml
           git commit -m "Return v10 renderer to astral-identicons"
           git fetch origin agent/split-modules
