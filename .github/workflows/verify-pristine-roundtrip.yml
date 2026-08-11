@@ -1,4 +1,4 @@
-name: Verify pristine v9 round-trip
+name: Verify astral-identicons split
 
 on:
   push:
