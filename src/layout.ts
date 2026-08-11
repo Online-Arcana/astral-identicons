@@ -1,7 +1,5 @@
-import {
-  literalSignGridPlacements,
-  type LiteralSignGridPlacement,
-} from "../vendor/astral-chart-wheel/dist/index.js";
+import { literalSignGridPlacements } from "./legacy/renderer/literalSignGrid.ts";
+import type { LiteralSignGridPlacement } from "./legacy/renderer/literalSignGrid.ts";
 import type { IdenticonInput } from "./types.ts";
 import type { Sign } from "./sign.ts";
 

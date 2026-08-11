@@ -1,8 +1,6 @@
-import {
-  renderAstralIdenticonV10,
-  type AstralIdenticonAssetSource,
-  type PublicWheelMeta
-} from "../vendor/astral-chart-wheel/dist/index.js";
+import type { PublicWheelMeta } from "../vendor/astral-chart-wheel/dist/index.js";
+import { renderAstralIdenticonV10 } from "./legacy/renderer/identiconV10.ts";
+import type { AstralIdenticonAssetSource } from "./legacy/renderer/identiconTypes.ts";
 import { palette } from "./palette.ts";
 import {
   v9DataByteCount,

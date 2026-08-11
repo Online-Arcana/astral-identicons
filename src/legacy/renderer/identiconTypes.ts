@@ -1,5 +1,6 @@
 import type { LiteralSignIdentity } from "./literalSignGrid.js";
 import type { Sign } from "../../sign.ts";
+import type { PublicWheelMeta } from "../../../vendor/astral-chart-wheel/dist/index.js";
 
 export interface AstralIdenticonInput extends LiteralSignIdentity { seed: string; }
 export interface AstralIdenticonAssetSource {
@@ -26,6 +27,17 @@ export interface AstralIdenticonPlanetState {
   readonly density: number;
   readonly satellites: { readonly small: number; readonly medium: number; readonly large: number; };
   readonly vector: AstralIdenticonTracedGlyph;
+}
+export interface AstralIdenticonV10Request {
+  readonly input: AstralIdenticonInput;
+  readonly wheel: PublicWheelMeta | null;
+  readonly paletteIndex: number;
+  readonly palette: AstralIdenticonPalette;
+  readonly identityHex: string;
+  readonly parityBytes: readonly number[];
+  readonly recordVersion: number;
+  readonly dataByteCount: number;
+  readonly parityByteCount: number;
 }
 export interface AstralIdenticonV9Request {
   readonly input: AstralIdenticonInput;
