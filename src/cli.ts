@@ -1,5 +1,5 @@
 import { astralInput } from "./astral.ts";
-import { fileAssets } from "./assets.ts";
+import { fileAssets, sharedWheelAssets } from "./assets.ts";
 import { buildCurrentIdenticon } from "./build-current.ts";
 import { input } from "./input.ts";
 import type { IdenticonInput, RawIdenticonInput } from "./types.ts";
@@ -106,8 +106,12 @@ async function main(): Promise<void> {
   }
 
   const value = await fromAstral(args) ?? input(await raw(args));
-  const assetsRoot = args.values.assets ?? `${import.meta.dir}/../assets`;
-  const svg = await buildCurrentIdenticon(value, fileAssets(assetsRoot));
+  const customAssetsRoot = args.values.assets;
+  const assetsRoot = customAssetsRoot ?? `${import.meta.dir}/../assets`;
+  const shared = customAssetsRoot === undefined
+    ? sharedWheelAssets(`${import.meta.dir}/../vendor/astral-chart-wheel`)
+    : undefined;
+  const svg = await buildCurrentIdenticon(value, fileAssets(assetsRoot, shared));
   const output = args.values.out;
 
   if (output) {
