@@ -1,0 +1,68 @@
+name: tmp-reclaim-legacy-renderers
+on:
+  push:
+    branches: [agent/split-modules]
+    paths: [.github/workflows/tmp-reclaim-legacy-renderers.yml]
+permissions:
+  contents: write
+jobs:
+  reclaim:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: agent/split-modules
+          submodules: recursive
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - name: Move v8 and v9 rendering back to identicons
+        run: |
+          set -euo pipefail
+          mkdir -p src/legacy/renderer
+          cp vendor/astral-chart-wheel/src/identiconCommon.ts src/legacy/renderer/identiconCommon.ts
+          cp vendor/astral-chart-wheel/src/identiconV8.ts src/legacy/renderer/identiconV8.ts
+          cp vendor/astral-chart-wheel/src/identiconV9.ts src/legacy/renderer/identiconV9.ts
+          cp vendor/astral-chart-wheel/src/identiconV9Geometry.ts src/legacy/renderer/identiconV9Geometry.ts
+          cp vendor/astral-chart-wheel/src/identiconTypes.ts src/legacy/renderer/identiconTypes.ts
+          cp vendor/astral-chart-wheel/src/literalSignGrid.ts src/legacy/renderer/literalSignGrid.ts
+          python3 - <<'PY'
+          from pathlib import Path
+
+          renderer = Path('src/legacy/renderer')
+          for name in ['identiconCommon.ts', 'literalSignGrid.ts']:
+              path = renderer / name
+              text = path.read_text().replace('from "./types.js"', 'from "../../sign.ts"')
+              path.write_text(text)
+
+          types = renderer / 'identiconTypes.ts'
+          text = types.read_text()
+          text = text.replace('import type { PublicWheelMeta } from "./publicWheel.js";\n', '')
+          text = text.replace('import type { Sign } from "./types.js";', 'import type { Sign } from "../../sign.ts";')
+          start = text.index('export interface AstralIdenticonV10Request')
+          end = text.index('export interface AstralIdenticonV9Request')
+          text = text[:start] + text[end:]
+          types.write_text(text)
+
+          for source in ['build-v8.ts', 'build-v9.ts']:
+              path = Path('src') / source
+              text = path.read_text()
+              if source == 'build-v8.ts':
+                  old = '''import {\n  renderAstralIdenticonV8,\n  type AstralIdenticonV8RecoveryStar\n} from "../vendor/astral-chart-wheel/dist/index.js";'''
+                  new = '''import { renderAstralIdenticonV8 } from "./legacy/renderer/identiconV8.ts";\nimport type { AstralIdenticonV8RecoveryStar } from "./legacy/renderer/identiconTypes.ts";'''
+              else:
+                  old = '''import {\n  renderAstralIdenticonV9,\n  type AstralIdenticonPlanetState\n} from "../vendor/astral-chart-wheel/dist/index.js";'''
+                  new = '''import { renderAstralIdenticonV9 } from "./legacy/renderer/identiconV9.ts";\nimport type { AstralIdenticonPlanetState } from "./legacy/renderer/identiconTypes.ts";'''
+              if old not in text:
+                  raise SystemExit(f'unexpected import block in {source}')
+              path.write_text(text.replace(old, new))
+          PY
+          bun install --frozen-lockfile
+          bun run check
+          bun test
+          bun run build:pages
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add src/legacy src/build-v8.ts src/build-v9.ts
+          git commit -m "Return legacy renderers to astral-identicons"
+          git push origin HEAD:agent/split-modules
