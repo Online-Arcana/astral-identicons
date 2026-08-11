@@ -1,4 +1,4 @@
-import { fileAssets } from "./assets.ts";
+import { fileAssets, sharedWheelAssets } from "./assets.ts";
 import { buildIdenticon } from "./build.ts";
 import { input } from "./input.ts";
 import { page } from "./page.ts";
@@ -7,7 +7,7 @@ import type { RawIdenticonInput } from "./types.ts";
 
 const root = `${import.meta.dir}/..`;
 const assetsRoot = `${root}/assets`;
-const assets = fileAssets(assetsRoot);
+const assets = fileAssets(assetsRoot, sharedWheelAssets(`${root}/vendor/astral-chart-wheel`));
 const sourceIndex = await Bun.file(`${root}/public/index.html`).text();
 const index = page(sourceIndex, {
   script: "/app.js",
