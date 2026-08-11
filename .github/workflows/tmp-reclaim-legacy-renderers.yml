@@ -30,7 +30,7 @@ jobs:
           from pathlib import Path
 
           renderer = Path('src/legacy/renderer')
-          for name in ['identiconCommon.ts', 'literalSignGrid.ts']:
+          for name in ['identiconCommon.ts', 'literalSignGrid.ts', 'identiconV8.ts']:
               path = renderer / name
               text = path.read_text().replace('from "./types.js"', 'from "../../sign.ts"')
               path.write_text(text)
