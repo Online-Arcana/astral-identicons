@@ -3,6 +3,7 @@ import { installFormatStatus } from "./format-status.ts";
 import { installVersionFooter } from "./footer.ts";
 import { Scanner as V8Scanner } from "./scan-v8.ts";
 import { V9Scanner } from "./scan-v9.ts";
+import { V10Scanner } from "./scan-v10.ts";
 import {
   exportedV9SvgFile,
   isSvgFile
@@ -24,11 +25,13 @@ interface ScannerOptions {
   apply(result: ScanResult): void;
 }
 
-const v8Selected = typeof location !== "undefined" &&
-  new URLSearchParams(location.search).get("scanner") === "v8";
+const selected = typeof location === "undefined"
+  ? null
+  : new URLSearchParams(location.search).get("scanner");
+const selectedVersion = selected === "v8" ? 8 : selected === "v9" ? 9 : 10;
 
 export const appVersion = packageMetadata.version;
-export const scannerVersion = v8Selected ? 8 : 9;
+export const scannerVersion = selectedVersion;
 
 installVersionFooter(appVersion, scannerVersion);
 installFormatStatus(scannerVersion);
@@ -41,14 +44,16 @@ function scanStatus(message: string, error = false): void {
 }
 
 export class Scanner {
-  readonly #scanner: V8Scanner | V9Scanner;
+  readonly #scanner: V8Scanner | V9Scanner | V10Scanner;
 
   constructor(options: ScannerOptions) {
-    this.#scanner = v8Selected
+    this.#scanner = selectedVersion === 8
       ? new V8Scanner(options)
-      : new V9Scanner(options);
+      : selectedVersion === 9
+        ? new V9Scanner(options)
+        : new V10Scanner(options);
 
-    if (!v8Selected) this.installExactSvgInput(options);
+    if (selectedVersion !== 8) this.installExactSvgInput(options);
   }
 
   open(): Promise<void> {
@@ -70,12 +75,12 @@ export class Scanner {
       event.preventDefault();
       event.stopImmediatePropagation();
       picker.value = "";
-      scanStatus("Validating the original v9 SVG record…");
+      scanStatus("Validating the original SVG identity record…");
 
       void exportedV9SvgFile(file)
         .then((value) => {
           if (!value) {
-            throw new Error("The selected SVG is not an exported v9 astral identicon");
+            throw new Error("The selected SVG is not an exported v9 or v10 astral identicon");
           }
           options.apply({
             ...value,
@@ -87,7 +92,7 @@ export class Scanner {
             cumulativeFrames: 1,
             captureMilliseconds: 0
           });
-          scanStatus("Original v9 SVG record validated exactly.");
+          scanStatus("Original SVG identity record validated exactly.");
           this.#scanner.close();
         })
         .catch((error: unknown) => {

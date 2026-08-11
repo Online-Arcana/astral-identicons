@@ -29,25 +29,25 @@ export function exportedV9Svg(source: string): IdenticonInput | null {
 
   const version = attribute(opening, "data-code-version");
   const scannable = attribute(opening, "data-scannable");
-  if (version !== "9" || scannable !== "v9") return null;
+  if (version !== "9" || (scannable !== "v9" && scannable !== "v10")) return null;
 
   const encodedInput = attribute(opening, "data-input");
   const encodedIdentity = attribute(opening, "data-identity-hex");
   if (!encodedInput || !encodedIdentity) {
-    throw new Error("The v9 SVG is missing its canonical identity metadata");
+    throw new Error("The exported SVG is missing its canonical identity metadata");
   }
 
   let raw: RawIdenticonInput;
   try {
     raw = JSON.parse(encodedInput) as RawIdenticonInput;
   } catch {
-    throw new Error("The v9 SVG contains malformed identity metadata");
+    throw new Error("The exported SVG contains malformed identity metadata");
   }
 
   const value = input(raw);
   const expected = identityHex(value);
   if (encodedIdentity.toLowerCase() !== expected) {
-    throw new Error("The v9 SVG identity metadata does not match its exact key");
+    throw new Error("The exported SVG identity metadata does not match its exact key");
   }
   return value;
 }

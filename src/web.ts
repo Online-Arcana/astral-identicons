@@ -1,4 +1,7 @@
-import { astralInput } from "./astral.ts";
+import {
+  astralSource,
+  boundAstralWheel
+} from "./astral.ts";
 import { buildIdenticon } from "./build.ts";
 import { palette } from "./palette.ts";
 import { Scanner } from "./scan.ts";
@@ -173,7 +176,8 @@ function warmAssets(): void {
     getAsset("assets/decor/star.svg"),
     ...signs.flatMap((sign) => [
       getAsset(`assets/constellations/${sign}.svg`),
-      getAsset(`assets/sigils/${sign}.svg`)
+      getAsset(`assets/sigils/${sign}.svg`),
+      getAsset(`assets/astrology-glyphs/svg/zodiac/${sign}.svg`)
     ])
   ];
 
@@ -185,7 +189,8 @@ function warmAssets(): void {
 const browserAssets: AssetSource = {
   constellation: (sign) => getAsset(`assets/constellations/${sign}.svg`),
   sigil: (sign) => getAsset(`assets/sigils/${sign}.svg`),
-  star: () => getAsset("assets/decor/star.svg")
+  star: () => getAsset("assets/decor/star.svg"),
+  astrologyGlyph: (path) => getAsset(`assets/astrology-glyphs/svg/${path}`)
 };
 
 function showPalette(valuePalette: ReturnType<typeof palette>): void {
@@ -304,7 +309,11 @@ async function render(): Promise<void> {
 
   const paletteIndex = seedPaletteIndex(data);
   const seedLabel = isPublicKey(data.seed) ? "32-byte public key" : "exact seed";
-  status.textContent = `The ${seedLabel} and all six signs are protected across ${seedSlotCount} existing stars; any ${seedDataByteCount} reliable stars can reconstruct the complete record. Palette ${paletteIndex.toString(16).padStart(2, "0").toUpperCase()}, the Solar constellation, centre grid and ring independently verify it. No additional data marks are drawn.`;
+  const natalWheel = boundAstralWheel(data);
+  const wheelCopy = natalWheel
+    ? "The public deterministic natal wheel supplies its houses and real chart points; aspect lines are replaced by the identicon field."
+    : "No natal wheel metadata is attached, so the preview uses the chart-wheel shell without inventing houses or planetary positions.";
+  status.textContent = `The ${seedLabel} and all six signs are protected across ${seedSlotCount} Reed–Solomon stars; any ${seedDataByteCount} reliable stars can reconstruct the complete record. Palette ${paletteIndex.toString(16).padStart(2, "0").toUpperCase()} colours the wheel. The Solar constellation and Reed–Solomon field occupy the normal aspect area. ${wheelCopy}`;
   status.className = "status";
 }
 
@@ -340,9 +349,9 @@ const scanner = new Scanner({
 });
 
 form.addEventListener("input", (event) => {
+  astralFile.value = "";
   if (event.target === seedField) {
     activeRaw = undefined;
-    astralFile.value = "";
   }
   schedule();
 });
@@ -353,12 +362,16 @@ astralFile.addEventListener("change", () => {
 
   status.textContent = "Reading packaged astral header locally...";
   status.className = "status";
+  let loadedWheel = false;
   void selected.arrayBuffer().then((buffer) => {
-    const data = astralInput(new Uint8Array(buffer));
-    apply(data);
+    const source = astralSource(new Uint8Array(buffer));
+    loadedWheel = source.wheel !== null;
+    apply(source.input);
     return render();
   }).then(() => {
-    status.textContent = "Loaded the exact raw Ed25519 public key and all six signs from the packaged astral file. The encrypted payload was not opened or changed.";
+    status.textContent = loadedWheel
+      ? "Loaded the exact raw Ed25519 public key, six signs and public deterministic natal wheel from the packaged astral file. The encrypted payload was not opened or changed."
+      : "Loaded the exact raw Ed25519 public key and all six signs from the packaged astral file. This older container has no public natal-wheel metadata, so no chart positions were invented. The encrypted payload was not opened or changed.";
     status.className = "status";
   }).catch(showError);
 });
@@ -406,8 +419,8 @@ form.addEventListener("submit", async (event) => {
 
     window.setTimeout(() => URL.revokeObjectURL(url), 0);
     status.textContent = isPublicKey(data.seed)
-      ? "Saved standalone SVG with the exact recoverable public key and signs."
-      : "Saved standalone SVG with the exact recoverable seed and signs.";
+      ? "Saved standalone chart-wheel SVG with the exact recoverable public key and signs."
+      : "Saved standalone chart-wheel SVG with the exact recoverable seed and signs.";
   } catch (error) {
     showError(error);
   } finally {

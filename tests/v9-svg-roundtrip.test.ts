@@ -18,12 +18,14 @@ const simpleAsset = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"
 const assets: AssetSource = {
   constellation: async () => simpleAsset,
   sigil: async () => simpleAsset,
-  star: async () => simpleAsset
+  star: async () => simpleAsset,
+  astrologyGlyph: async () => simpleAsset
 };
 
-describe("original v9 SVG ingestion", () => {
-  test("recovers the exact identity and six signs from a freshly exported SVG", async () => {
+describe("current SVG ingestion", () => {
+  test("recovers the exact identity and six signs from a freshly exported v10 SVG", async () => {
     const svg = await buildIdenticon(sample, assets);
+    expect(svg).toContain('data-visual-version="10"');
     expect(exportedV9Svg(svg)).toEqual(sample);
   });
 
@@ -38,7 +40,7 @@ describe("original v9 SVG ingestion", () => {
     );
   });
 
-  test("does not mistake an arbitrary SVG for an exported v9 record", () => {
+  test("does not mistake an arbitrary SVG for an exported v9/v10 record", () => {
     expect(exportedV9Svg(simpleAsset)).toBeNull();
   });
 });

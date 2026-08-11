@@ -4,12 +4,14 @@ import type { Sign } from "./sign.ts";
 export interface SharedVisualAssetPaths {
   constellations: string;
   star: string;
+  astrologyGlyphs: string;
 }
 
 export function sharedWheelAssets(root: string): SharedVisualAssetPaths {
   return {
     constellations: `${root}/assets/constellations`,
-    star: `${root}/assets/reed-solomon/star.svg`
+    star: `${root}/assets/reed-solomon/star.svg`,
+    astrologyGlyphs: `${root}/assets/astrology-glyphs/svg`
   };
 }
 
@@ -23,6 +25,7 @@ export function fileAssets(root: string, shared?: SharedVisualAssetPaths): Asset
   return {
     constellation: (sign: Sign) => read(`${shared?.constellations ?? `${root}/constellations`}/${sign}.svg`),
     sigil: (sign: Sign) => read(`${root}/sigils/${sign}.svg`),
-    star: () => read(shared?.star ?? `${root}/decor/star.svg`)
+    star: () => read(shared?.star ?? `${root}/decor/star.svg`),
+    astrologyGlyph: (path: string) => read(`${shared?.astrologyGlyphs ?? `${root}/astrology-glyphs/svg`}/${path}`)
   };
 }

@@ -38,4 +38,5 @@ export interface AssetSource {
   constellation(sign: Sign): Promise<string>;
   sigil(sign: Sign): Promise<string>;
   star(): Promise<string>;
+  astrologyGlyph?(path: string): Promise<string>;
 }

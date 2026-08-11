@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { buildIdenticon, visualFormatVersion } from "../src/build.ts";
+import { visualFormatVersion } from "../src/build.ts";
+import { buildV9Identicon } from "../src/build-v9.ts";
 import {
   v9RayFadingLevels,
   v9StarCalibrationLevels
@@ -325,13 +326,13 @@ describe("v9 geometry and renderer", () => {
     ).toEqual(v9StarCalibrationLevels);
   });
 
-  test("routes exact identities to v9 and text seeds to legacy v8", () => {
-    expect(visualFormatVersion(sample)).toBe(9);
+  test("routes exact identities to v10 and text seeds to legacy v8", () => {
+    expect(visualFormatVersion(sample)).toBe(10);
     expect(visualFormatVersion(legacy)).toBe(8);
   });
 
-  test("renders only the specified clean visual channels", async () => {
-    const svg = await buildIdenticon(sample, assets);
+  test("retains the legacy v9 renderer for old visual records", async () => {
+    const svg = await buildV9Identicon(sample, assets);
 
     expect(svg).toContain('data-code-version="9"');
     expect(svg).toContain('data-code="reed-solomon-168-40-parity-stars-128-v9"');
