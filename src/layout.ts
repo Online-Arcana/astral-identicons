@@ -1,14 +1,11 @@
+import {
+  literalSignGridPlacements,
+  type LiteralSignGridPlacement,
+} from "../vendor/astral-chart-wheel/dist/index.js";
 import type { IdenticonInput } from "./types.ts";
 import type { Sign } from "./sign.ts";
 
-export interface SigilPlacement {
-  key: string;
-  sign: Sign;
-  x: number;
-  y: number;
-  size: number;
-  role: string;
-}
+export type SigilPlacement = LiteralSignGridPlacement;
 
 export interface RingPlacement {
   key: string;
@@ -66,82 +63,7 @@ function ringItem(
 }
 
 export function placements(value: IdenticonInput): readonly SigilPlacement[] {
-  const offset = 230;
-
-  return [
-    {
-      key: "ascendant",
-      sign: value.ascendant,
-      x: centre - offset,
-      y: centre - offset,
-      size: 154,
-      role: "Ascendant"
-    },
-    {
-      key: "moon-top",
-      sign: value.lunar,
-      x: centre,
-      y: centre - offset,
-      size: 146,
-      role: "Moon"
-    },
-    {
-      key: "midheaven",
-      sign: value.midheaven,
-      x: centre + offset,
-      y: centre - offset,
-      size: 154,
-      role: "Midheaven"
-    },
-    {
-      key: "moon-left",
-      sign: value.lunar,
-      x: centre - offset,
-      y: centre,
-      size: 146,
-      role: "Moon"
-    },
-    {
-      key: "sun",
-      sign: value.solar,
-      x: centre,
-      y: centre,
-      size: 214,
-      role: "Sun"
-    },
-    {
-      key: "moon-right",
-      sign: value.lunar,
-      x: centre + offset,
-      y: centre,
-      size: 146,
-      role: "Moon"
-    },
-    {
-      key: "imum-coeli",
-      sign: value.imumCoeli,
-      x: centre - offset,
-      y: centre + offset,
-      size: 154,
-      role: "Imum Coeli"
-    },
-    {
-      key: "moon-bottom",
-      sign: value.lunar,
-      x: centre,
-      y: centre + offset,
-      size: 146,
-      role: "Moon"
-    },
-    {
-      key: "descendant",
-      sign: value.descendant,
-      x: centre + offset,
-      y: centre + offset,
-      size: 154,
-      role: "Descendant"
-    }
-  ] as const;
+  return literalSignGridPlacements(value, { centre, offset: 230 });
 }
 
 export function ringPlacements(value: IdenticonInput): readonly RingPlacement[] {
