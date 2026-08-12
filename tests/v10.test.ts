@@ -136,6 +136,21 @@ describe("v10 chart-wheel identicon", () => {
     expect(svg).not.toContain('wheel-point-');
   });
 
+  test("renders only the canonical planetary point collection", async () => {
+  const svg = await buildIdenticon(sample, assets, wheel);
+  const planets = [
+    "sun", "moon", "mercury", "venus", "mars",
+    "jupiter", "saturn", "uranus", "neptune", "pluto"
+  ] as const;
+  for (const planet of planets) expect(svg).toContain(`wheel-point-${planet}`);
+  for (const hidden of [
+    "north_node_true", "south_node_true", "north_node_mean", "south_node_mean",
+    "ascendant", "descendant", "midheaven", "imum_coeli", "vertex", "antivertex", "east_point",
+    "part_of_fortune", "part_of_spirit", "lilith_mean", "lilith_true"
+  ] as const) expect(svg).not.toContain(`wheel-point-${hidden}`);
+  expect(svg).toContain('id="wheel-houses"');
+});
+
   test("the 128 parity stars can recover the complete record with every data byte erased", () => {
     const parityBytes = [...v9Parity(sample)];
     const parity = parityBytes.map((value, index) => index < v9DataByteCount

@@ -12,7 +12,11 @@ import type {
   AstralIdenticonAssetSource,
   AstralIdenticonV10Request,
 } from "./identiconTypes.js";
-import type { PointId } from "../../../vendor/astral-chart-wheel/dist/index.js";
+import {
+  pointGlyphVisible,
+  type PointId,
+  type WheelGlyphs,
+} from "../../../vendor/astral-chart-wheel/dist/wheel/index.js";
 import type { Sign } from "../../sign.ts";
 
 const canvas = 800;
@@ -23,6 +27,11 @@ const radii = {
   pointBase: 286,
   aspect: 210,
 } as const;
+
+const identiconPointGlyphs = {
+  default: false,
+  collections: { planets: true },
+} as const satisfies WheelGlyphs;
 
 const signOrder = [
   "aries", "taurus", "gemini", "cancer", "leo", "virgo",
@@ -89,9 +98,12 @@ const line = (
 const pointLayout = (request: AstralIdenticonV10Request): PlacedPoint[] => {
   if (request.wheel === null) return [];
   const points = Object.entries(request.wheel.points)
-    .flatMap(([rawId, longitude]) => longitude === null
+  .flatMap(([rawId, longitude]) => {
+    const id = rawId as PointId;
+    return longitude === null || !pointGlyphVisible(id, identiconPointGlyphs)
       ? []
-      : [{ id: rawId as PointId, longitude }])
+      : [{ id, longitude }];
+  })
     .sort((left, right) => left.longitude - right.longitude || left.id.localeCompare(right.id));
   const lastByLane: (number | null)[] = [null, null, null, null, null];
   return points.map((point) => {
