@@ -27,6 +27,7 @@ jobs:
           git -C vendor/astral-chart-wheel checkout "$CORE_SHA"
           python3 - <<'PY'
           from pathlib import Path
+          import re
 
           renderer = Path('src/legacy/renderer/identiconV10.ts')
           text = renderer.read_text()
@@ -57,24 +58,23 @@ jobs:
                   raise SystemExit('V10 radii block changed unexpectedly')
               text = text.replace(radii, visibility, 1)
 
-              old_layout = '''  const points = Object.entries(request.wheel.points)
-            .flatMap(([rawId, longitude]) => longitude === null
-              ? []
-              : [{ id: rawId as PointId, longitude }])'''
-              # YAML block indentation is stripped by the runner. Match the actual
-              # four/two-space TypeScript continuation indentation explicitly.
-              old_layout = old_layout.replace('      .flatMap', '    .flatMap').replace('        ? []', '      ? []').replace('        : [{', '      : [{')
-              new_layout = '''  const points = Object.entries(request.wheel.points)
+              pattern = re.compile(
+                  r'  const points = Object\.entries\(request\.wheel\.points\)\n'
+                  r'\s+\.flatMap\(\(\[rawId, longitude\]\) => longitude === null\n'
+                  r'\s+\? \[\]\n'
+                  r'\s+: \[\{ id: rawId as PointId, longitude \}\]\)'
+              )
+              replacement = '''  const points = Object.entries(request.wheel.points)
             .flatMap(([rawId, longitude]) => {
               const id = rawId as PointId;
               return longitude === null || !pointGlyphVisible(id, identiconPointGlyphs)
                 ? []
                 : [{ id, longitude }];
             })'''
-              new_layout = new_layout.replace('      .flatMap', '    .flatMap').replace('        const id', '      const id').replace('        return longitude', '      return longitude').replace('          ? []', '        ? []').replace('          : [{', '        : [{').replace('      })', '    })')
-              if old_layout not in text:
-                  raise SystemExit('V10 point layout changed unexpectedly')
-              text = text.replace(old_layout, new_layout, 1)
+              replacement = replacement.replace('      .flatMap', '    .flatMap').replace('        const id', '      const id').replace('        return longitude', '      return longitude').replace('          ? []', '        ? []').replace('          : [{', '        : [{').replace('      })', '    })')
+              text, count = pattern.subn(replacement, text, count=1)
+              if count != 1:
+                  raise SystemExit(f'V10 point layout replacement count was {count}')
               renderer.write_text(text)
 
           tests = Path('tests/v10.test.ts')
