@@ -366,6 +366,7 @@ const scanner = new Scanner({
 });
 
 form.addEventListener("input", (event) => {
+  if (event.target === astralFile) return;
   astralFile.value = "";
   if (event.target === seedField) {
     activeRaw = undefined;
