@@ -32,9 +32,15 @@ const radii = {
   pointBase: 286,
 } as const;
 
-const identiconPointGlyphs = {
+export const v10IdenticonPointGlyphs = {
   default: false,
   collections: { planets: true },
+  points: {
+    ascendant: true,
+    descendant: true,
+    midheaven: true,
+    imum_coeli: true,
+  },
 } as const satisfies WheelGlyphs;
 
 const signOrder = [
@@ -104,7 +110,7 @@ const pointLayout = (request: AstralIdenticonV10Request): PlacedPoint[] => {
   const points = Object.entries(request.wheel.points)
   .flatMap(([rawId, longitude]) => {
     const id = rawId as PointId;
-    return longitude === null || !pointGlyphVisible(id, identiconPointGlyphs)
+    return longitude === null || !pointGlyphVisible(id, v10IdenticonPointGlyphs)
       ? []
       : [{ id, longitude }];
   })
@@ -292,7 +298,7 @@ export async function renderAstralIdenticonV10(
   return `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="${canvas}" height="${canvas}" viewBox="0 0 ${canvas} ${canvas}" role="img" aria-label="${escapeXml(title)}" data-input="${escapeXml(JSON.stringify(request.input))}" data-palette-index="${request.paletteIndex}" data-code-version="${request.recordVersion}" data-visual-version="10" data-scannable="v10" data-identity-hex="${request.identityHex}">
   <title>${escapeXml(title)}</title>
-  <metadata>Astral chart identicon visual contract v10. The deterministic natal chart wheel supplies the zodiac ring and real planetary chart points. House divisions, house labels and aspect lines are deliberately omitted. The identicon field keeps a clear gutter inside the zodiac ring and contains the Solar constellation artwork and the one hundred and twenty-eight RS(168,40) parity stars. The former encoded planetary glyphs, satellites, literal six-sign grid and separate identicon zodiac ring are not rendered.</metadata>
+  <metadata>Astral chart identicon visual contract v10. The deterministic natal chart wheel supplies all twelve zodiac sectors, the ten ordinary planetary points and the four cardinal angle glyphs used to read Solar, Lunar, Ascendant, Midheaven, Descendant and Imum Coeli signs from their positions against the zodiac. House divisions, house labels and aspect lines are deliberately omitted. The identicon field keeps a clear gutter inside the zodiac ring and contains the Solar constellation artwork and the one hundred and twenty-eight RS(168,40) parity stars. The former encoded planetary glyphs, satellites, literal six-sign grid and separate identicon zodiac ring are not rendered.</metadata>
   <defs>
     <clipPath id="identicon-aspect-clip"><circle cx="${centre}" cy="${centre}" r="${v10OverlayClipRadius}"/></clipPath>
   </defs>
