@@ -2,6 +2,7 @@ import {
   calc,
   webPorts,
   type Calculation,
+  type PlaceData,
 } from "../vendor/astral-chart-wheel/dist/web.js";
 import type { PublicWheelMeta } from "../vendor/astral-chart-wheel/dist/wheel/public.js";
 import { astralSource, type AstralIdenticonSource } from "./astral.ts";
@@ -61,7 +62,7 @@ const randomTime = (): string => `${pad(randomIndex(24))}:${pad(randomIndex(60))
 
 const longitude = (value: number | null, label: string): number => {
   if (value === null || !Number.isFinite(value)) {
-    throw new Error(`Random preview chart has no ${label} longitude`);
+    throw new Error(`Preview chart has no ${label} longitude`);
   }
   return value;
 };
@@ -93,7 +94,11 @@ export const publicWheelFromCalculation = (calculation: Calculation): PublicWhee
   };
 };
 
-const previewContainer = (wheel: PublicWheelMeta): Uint8Array => {
+const previewContainer = (wheel: PublicWheelMeta, rawPublicKey: Uint8Array): Uint8Array => {
+  if (rawPublicKey.byteLength !== 32) {
+    throw new Error("Preview chart requires a 32-byte Ed25519 public key seed");
+  }
+
   const values = Object.fromEntries(Object.entries(pointSigns).map(([name, point]) => [
     name,
     signAt(longitude(wheel.points[point], point)),
@@ -128,7 +133,7 @@ const previewContainer = (wheel: PublicWheelMeta): Uint8Array => {
   view.setUint32(24, cipherSize, false);
   view.setUint32(28, headSize, false);
   crypto.getRandomValues(output.subarray(32, 60));
-  crypto.getRandomValues(output.subarray(60, 92));
+  output.set(rawPublicKey, 60);
   output.set(publicMeta, 92);
   crypto.getRandomValues(output.subarray(headSize));
   return output;
@@ -145,13 +150,61 @@ const previewPorts = (base: URL): ReturnType<typeof webPorts> => {
   return portsPromise;
 };
 
-export interface RandomAstralPreview {
+export interface AstralPreview {
   readonly bytes: Uint8Array;
   readonly source: AstralIdenticonSource;
   readonly calculation: Calculation;
 }
 
-export const randomAstralPreview = async (pageBase: string | URL): Promise<RandomAstralPreview> => {
+export interface BirthAstralPreviewInput {
+  readonly date: string;
+  readonly time: string;
+  readonly place: PlaceData;
+  readonly rawPublicKey: Uint8Array;
+}
+
+const completeWheel = (calculation: Calculation): PublicWheelMeta => {
+  const wheel = publicWheelFromCalculation(calculation);
+  longitude(wheel.points.sun, "Sun");
+  longitude(wheel.points.moon, "Moon");
+  longitude(wheel.points.ascendant, "Ascendant");
+  longitude(wheel.points.descendant, "Descendant");
+  longitude(wheel.points.midheaven, "Midheaven");
+  longitude(wheel.points.imum_coeli, "Imum Coeli");
+  if (wheel.houses.status === "unavailable") {
+    throw new Error("Preview chart has no calculated houses");
+  }
+  return wheel;
+};
+
+export const birthAstralPreview = async (
+  pageBase: string | URL,
+  input: BirthAstralPreviewInput,
+): Promise<AstralPreview> => {
+  const basePorts = await previewPorts(new URL("assets/preview-places/", pageBase));
+  const calculation = await calc({
+    date: input.date,
+    time: input.time,
+    timeAccuracy: "exact",
+    placeId: input.place.id,
+  }, {
+    zodiac: "tropical",
+    ayanamsha: "lahiri",
+  }, {
+    ...basePorts,
+    places: {
+      get: async (id: string): Promise<PlaceData> => {
+        if (id !== input.place.id) throw new Error(`Unknown preview place ${id}`);
+        return input.place;
+      },
+    },
+  });
+  const wheel = completeWheel(calculation);
+  const bytes = previewContainer(wheel, input.rawPublicKey);
+  return { bytes, source: astralSource(bytes), calculation };
+};
+
+export const randomAstralPreview = async (pageBase: string | URL): Promise<AstralPreview> => {
   const places = new URL("assets/preview-places/", pageBase);
   const ports = await previewPorts(places);
   let last: unknown = null;
@@ -167,17 +220,9 @@ export const randomAstralPreview = async (pageBase: string | URL): Promise<Rando
         zodiac: "tropical",
         ayanamsha: "lahiri",
       }, ports);
-      const wheel = publicWheelFromCalculation(calculation);
-      longitude(wheel.points.sun, "Sun");
-      longitude(wheel.points.moon, "Moon");
-      longitude(wheel.points.ascendant, "Ascendant");
-      longitude(wheel.points.descendant, "Descendant");
-      longitude(wheel.points.midheaven, "Midheaven");
-      longitude(wheel.points.imum_coeli, "Imum Coeli");
-      if (wheel.houses.status === "unavailable") {
-        throw new Error("Random preview chart has no calculated houses");
-      }
-      const bytes = previewContainer(wheel);
+      const wheel = completeWheel(calculation);
+      const rawPublicKey = crypto.getRandomValues(new Uint8Array(32));
+      const bytes = previewContainer(wheel, rawPublicKey);
       return { bytes, source: astralSource(bytes), calculation };
     } catch (cause: unknown) {
       last = cause;
