@@ -108,15 +108,14 @@ describe("v10 chart-wheel identicon", () => {
     expect(svg).toContain('data-visual-version="10"');
     expect(svg).toContain('data-scannable="v10"');
     expect(svg).toContain('id="wheel-zodiac"');
-    expect(svg).toContain('id="wheel-houses"');
-    const houseLayer = svg.match(/<g id="wheel-houses">([\s\S]*?)<\/g>/u)?.[1] ?? "";
-    expect(houseLayer).not.toContain("<text");
+    expect(svg).not.toContain('id="wheel-houses"');
     expect(svg).toContain('id="wheel-points"');
     expect(svg).toContain('id="identicon-aspect-overlay"');
     expect(svg).toContain('id="solar-constellation"');
     expect(svg).toContain('id="reed-solomon-stars"');
     expect(svg).toContain('data-code="reed-solomon-168-40-parity-stars-128-v10"');
     expect(count(svg, /data-parity-index=/gu)).toBe(128);
+    expect(count(svg, /<line /gu)).toBe(72);
 
     expect(svg).not.toContain('id="planetary-identity-v9"');
     expect(svg).not.toContain('data-planet-index=');
@@ -150,7 +149,7 @@ describe("v10 chart-wheel identicon", () => {
     "ascendant", "descendant", "midheaven", "imum_coeli", "vertex", "antivertex", "east_point",
     "part_of_fortune", "part_of_spirit", "lilith_mean", "lilith_true"
   ] as const) expect(svg).not.toContain(`wheel-point-${hidden}`);
-  expect(svg).toContain('id="wheel-houses"');
+  expect(svg).not.toContain('id="wheel-houses"');
 });
 
   test("the 128 parity stars can recover the complete record with every data byte erased", () => {

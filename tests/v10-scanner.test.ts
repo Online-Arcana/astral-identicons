@@ -3,9 +3,11 @@ import {
   rotateV10Point,
   v10Canvas,
   v10OuterRingRadius,
+  v10OverlayRadius,
   v10ParityAnchorPoint,
   v10ParityStarSizes,
-  v10RingRatio
+  v10RingRatio,
+  v10ZodiacInnerRadius
 } from "../src/layout-v10.ts";
 import { v9ParityVisualState } from "../src/parity-v9.ts";
 import { v9Parity } from "../src/record-v9.ts";
@@ -127,6 +129,10 @@ function ringFrame(): { width: number; height: number; data: Uint8ClampedArray }
 }
 
 describe("v10 parity-only scanner", () => {
+  test("expands the scannable field to the zodiac ring", () => {
+    expect(v10OverlayRadius).toBe(v10ZodiacInnerRadius);
+  });
+
   test("infers rotation from the asymmetric Reed–Solomon field", () => {
     const observed = observeV10Orientation(starImage(73.5));
     expect(distance(observed.angle, 73.5)).toBeLessThanOrEqual(1);

@@ -8,6 +8,7 @@ import {
   signLabel,
 } from "./identiconCommon.js";
 import { parityLayer, v9InnerClipRadius } from "./identiconV9Geometry.js";
+import { v10OverlayRadius, v10OverlayScale } from "../../layout-v10.js";
 import type {
   AstralIdenticonAssetSource,
   AstralIdenticonV10Request,
@@ -25,7 +26,6 @@ const radii = {
   outer: 372,
   zodiacInner: 316,
   pointBase: 286,
-  aspect: 210,
 } as const;
 
 const identiconPointGlyphs = {
@@ -221,28 +221,6 @@ function degreeTicks(request: AstralIdenticonV10Request, ascendant: number): str
   return `<g id="wheel-degree-ticks">${ticks.join("")}</g>`;
 }
 
-function housesLayer(request: AstralIdenticonV10Request, ascendant: number): string {
-  const wheel = request.wheel;
-  if (wheel === null || wheel.points.ascendant === null || wheel.houses.status === "unavailable") return "";
-  const houses: string[] = [];
-  for (let number = 1; number <= 12; number += 1) {
-    const house = wheel.houses.houses[String(number)];
-    if (house === undefined || house.cuspLongitudeDegrees === null || house.endLongitudeDegrees === null) continue;
-    houses.push(`<path d="${sectorPath(house.cuspLongitudeDegrees, house.endLongitudeDegrees, radii.aspect, radii.zodiacInner, ascendant)}" fill="${request.palette.layer0}" fill-opacity="0.018"/>`);
-    const angular = [1, 4, 7, 10].includes(number);
-    houses.push(line(
-      house.cuspLongitudeDegrees,
-      radii.aspect,
-      radii.zodiacInner,
-      ascendant,
-      request.palette.layer1,
-      angular ? 0.78 : 0.28,
-      angular ? 2.6 : 1.25,
-    ));
-  }
-  return `<g id="wheel-houses">${houses.join("")}</g>`;
-}
-
 async function pointsLayer(
   request: AstralIdenticonV10Request,
   assets: AstralIdenticonAssetSource,
@@ -253,8 +231,6 @@ async function pointsLayer(
   for (const point of placed) {
     const radius = radii.pointBase - point.lane * 24;
     const location = polar(point.longitude, radius, ascendant);
-    parts.push(line(point.longitude, radii.zodiacInner - 3, radius + 16, ascendant, request.palette.layer1, 0.23, 1));
-    parts.push(line(point.longitude, radii.zodiacInner - 10, radii.zodiacInner + 1, ascendant, request.palette.layer1, 0.76, 1.8));
     const asset = pointAsset(point.id);
     if (asset === null) continue;
     parts.push(await glyph(
@@ -285,7 +261,7 @@ async function identiconOverlay(
   const sourceSize = sourceRadius * 2;
   const sourceX = identiconCentre - sourceRadius;
   const sourceY = identiconCentre - sourceRadius;
-  const scale = (radii.aspect - 8) / v9InnerClipRadius;
+  const scale = v10OverlayScale;
   const transform = `translate(${centre} ${centre}) scale(${scale.toFixed(9)}) translate(-${identiconCentre} -${identiconCentre})`;
   return `<g id="identicon-aspect-overlay" clip-path="url(#identicon-aspect-clip)">
     <g transform="${transform}">
@@ -312,15 +288,14 @@ export async function renderAstralIdenticonV10(
   return `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="${canvas}" height="${canvas}" viewBox="0 0 ${canvas} ${canvas}" role="img" aria-label="${escapeXml(title)}" data-input="${escapeXml(JSON.stringify(request.input))}" data-palette-index="${request.paletteIndex}" data-code-version="${request.recordVersion}" data-visual-version="10" data-scannable="v10" data-identity-hex="${request.identityHex}">
   <title>${escapeXml(title)}</title>
-  <metadata>Astral chart identicon visual contract v10. The deterministic natal chart wheel supplies the zodiac, selected houses and real chart points. Aspect lines are deliberately omitted. The aspect area contains only the Solar constellation artwork and the one hundred and twenty-eight RS(168,40) parity stars. The former encoded planetary glyphs, satellites, literal six-sign grid and separate identicon zodiac ring are not rendered.</metadata>
+  <metadata>Astral chart identicon visual contract v10. The deterministic natal chart wheel supplies the zodiac ring and real planetary chart points. House divisions, house labels and aspect lines are deliberately omitted. The identicon field expands to the inner edge of the zodiac ring and contains the Solar constellation artwork and the one hundred and twenty-eight RS(168,40) parity stars. The former encoded planetary glyphs, satellites, literal six-sign grid and separate identicon zodiac ring are not rendered.</metadata>
   <defs>
-    <clipPath id="identicon-aspect-clip"><circle cx="${centre}" cy="${centre}" r="${radii.aspect - 4}"/></clipPath>
+    <clipPath id="identicon-aspect-clip"><circle cx="${centre}" cy="${centre}" r="${v10OverlayRadius}"/></clipPath>
   </defs>
   <rect id="background" x="0" y="0" width="${canvas}" height="${canvas}" fill="${request.palette.background}"/>
   <circle id="wheel-frame" cx="${centre}" cy="${centre}" r="${radii.outer}" fill="${request.palette.background}" stroke="${request.palette.layer1}" stroke-opacity="0.62" stroke-width="2"/>
   ${zodiac}
   ${degreeTicks(request, ascendant)}
-  ${housesLayer(request, ascendant)}
   ${overlay}
   ${points}
 </svg>
