@@ -68,13 +68,43 @@ const displayedPoints = {
   imumCoeli: "imum_coeli",
 } as const;
 
+type DisplayedField = keyof typeof displayedPoints;
+const signLabels = new Map<DisplayedField, HTMLOutputElement>();
+
+const clearSignLabels = (): void => {
+  for (const output of signLabels.values()) {
+    output.textContent = "Not calculated";
+    output.classList.add("empty");
+  }
+};
+
+const showSignLabels = (input: AstralIdenticonSource["input"]): void => {
+  for (const field of Object.keys(displayedPoints) as DisplayedField[]) {
+    const output = signLabels.get(field);
+    if (output === undefined) continue;
+    output.textContent = label(input[field]);
+    output.classList.remove("empty");
+  }
+};
+
+const syncSignLabelsFromControls = (): void => {
+  for (const field of Object.keys(displayedPoints) as DisplayedField[]) {
+    const select = document.querySelector<HTMLSelectElement>(`#${field}`);
+    const output = signLabels.get(field);
+    if (select === null || output === undefined) continue;
+    output.textContent = label(select.value as Sign);
+    output.classList.remove("empty");
+  }
+};
+
 const clearPositions = (): void => {
   for (const output of document.querySelectorAll<HTMLElement>(".chart-position")) output.remove();
 };
 
 const showPositions = (source: AstralIdenticonSource): void => {
+  showSignLabels(source.input);
   clearPositions();
-  for (const [field, point] of Object.entries(displayedPoints) as Array<[keyof typeof displayedPoints, typeof displayedPoints[keyof typeof displayedPoints]]>) {
+  for (const [field, point] of Object.entries(displayedPoints) as Array<[DisplayedField, typeof displayedPoints[DisplayedField]]>) {
     const select = document.querySelector<HTMLSelectElement>(`#${field}`);
     if (select === null) continue;
     const wrapper = select.closest<HTMLElement>(".field");
@@ -177,9 +207,22 @@ style.textContent = `
     line-height: 1.4;
   }
   .birth-status.error { color: #ff9eaa; }
+  #sign-fields select[hidden] { display: none; }
+  .sign-value {
+    display: block;
+    margin-top: .2rem;
+    color: #f1f1f6;
+    font-size: 1rem;
+    font-weight: 650;
+    line-height: 1.35;
+  }
+  .sign-value.empty {
+    color: #77778a;
+    font-weight: 500;
+  }
   .chart-position {
     display: block;
-    margin-top: -0.1rem;
+    margin-top: .18rem;
     color: #9696aa;
     font-size: 0.76rem;
     line-height: 1.35;
@@ -199,11 +242,28 @@ if (form === null || seed === null || astralInput === null) {
   throw new Error("Identicon builder controls are unavailable");
 }
 
+for (const field of Object.keys(displayedPoints) as DisplayedField[]) {
+  const select = form.querySelector<HTMLSelectElement>(`#${field}`);
+  const wrapper = select?.closest<HTMLElement>(".field") ?? null;
+  if (select === null || wrapper === null) continue;
+  select.hidden = true;
+  select.tabIndex = -1;
+  select.setAttribute("aria-hidden", "true");
+  const title = wrapper.querySelector<HTMLLabelElement>("label");
+  title?.removeAttribute("for");
+  const output = document.createElement("output");
+  output.id = `${field}-value`;
+  output.className = "sign-value empty";
+  output.textContent = "Not calculated";
+  wrapper.append(output);
+  signLabels.set(field, output);
+}
+
 const heading = document.querySelector<HTMLElement>("main > header h1");
 if (heading !== null) heading.textContent = "Astrological identicon";
 const introduction = document.querySelector<HTMLElement>("main > header p");
 if (introduction !== null) {
-  introduction.textContent = "Build a V10 chart-wheel identicon from explicit birth data, load an existing packaged .astral file, or edit the seed and six signs manually. Manual fields are never replaced unless you explicitly calculate or load a chart.";
+  introduction.textContent = "Build a V10 chart-wheel identicon from explicit birth data or load an existing packaged .astral file. The six V10 signs are derived from the chart and shown as read-only labels.";
 }
 
 const birth = document.createElement("section");
@@ -211,7 +271,7 @@ birth.className = "birth-chart";
 birth.setAttribute("aria-labelledby", "birth-heading");
 birth.innerHTML = `
   <h2 id="birth-heading">Birth chart</h2>
-  <p class="birth-copy">Date, exact local time and birthplace are calculated through the same deterministic astrology core used by the V10 wheel. Calculating updates the six signs from the resulting longitudes while keeping the current public-key seed.</p>
+  <p class="birth-copy">Date, exact local time and birthplace are calculated through the same deterministic astrology core used by the V10 wheel. Calculating derives the six V10 signs from the resulting longitudes while keeping the current public-key seed.</p>
   <div class="birth-grid">
     <div class="field">
       <label for="birth-date">Date of birth</label>
@@ -402,7 +462,7 @@ calculateButton.addEventListener("click", () => {
     setSelectedFile(astralInput, file);
     showPositions(preview.source);
     astralInput.dispatchEvent(new Event("change", { bubbles: true }));
-    birthStatus.textContent = `Calculated ${place.city.name}, ${place.country.name} at ${birthDate.value} ${birthTime.value} (${place.timeZone}). The seed was preserved and the six signs now come from the calculated V10 longitudes.`;
+    birthStatus.textContent = `Calculated ${place.city.name}, ${place.country.name} at ${birthDate.value} ${birthTime.value} (${place.timeZone}). The seed was preserved and the six V10 sign labels now come from the calculated longitudes.`;
     birthStatus.className = "birth-status";
   })().catch(showBirthError).finally(() => {
     updateCalculateState();
@@ -413,6 +473,19 @@ form.addEventListener("input", (event) => {
   const target = event.target;
   if (target instanceof HTMLInputElement && target.id === "astral-file") return;
   clearPositions();
+  clearSignLabels();
 });
+
+document.querySelector<HTMLButtonElement>("#random")?.addEventListener("click", () => {
+  clearPositions();
+  clearSignLabels();
+});
+
+const mainStatus = document.querySelector<HTMLParagraphElement>("#status");
+if (mainStatus !== null) {
+  new MutationObserver(() => {
+    if (mainStatus.textContent?.startsWith("Camera recovered")) syncSignLabelsFromControls();
+  }).observe(mainStatus, { childList: true, characterData: true, subtree: true });
+}
 
 void loadCountries();
