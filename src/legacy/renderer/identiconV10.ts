@@ -243,7 +243,7 @@ async function pointsLayer(
     const location = polar(point.longitude, radius, ascendant);
     const asset = pointAsset(point.id);
     if (asset === null) continue;
-    parts.push(await glyph(
+    const rendered = await glyph(
       assets,
       asset.path,
       `wheel-point-${point.id}`,
@@ -253,7 +253,8 @@ async function pointsLayer(
       request.palette.layer1,
       asset.rotation ?? 0,
       asset.modifier,
-    ));
+    );
+    parts.push(`<g data-point="${point.id}" data-longitude="${point.longitude.toFixed(9)}" data-lane="${point.lane}">${rendered}</g>`);
   }
   return `<g id="wheel-points">${parts.join("")}</g>`;
 }
