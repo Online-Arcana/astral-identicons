@@ -22,6 +22,7 @@ jobs:
       - name: Apply V10 geometry and shell changes
         run: |
           python3 - <<'PY'
+          import re
           from pathlib import Path
 
           def replace_once(text: str, old: str, new: str, label: str) -> str:
@@ -30,118 +31,45 @@ jobs:
                   raise SystemExit(f'{label}: expected exactly one match, found {count}')
               return text.replace(old, new, 1)
 
+          def sub_once(text: str, pattern: str, replacement: str, label: str) -> str:
+              compiled = re.compile(pattern, re.S)
+              match = compiled.search(text)
+              if match is None:
+                  raise SystemExit(f'{label}: pattern did not match')
+              return text[:match.start()] + replacement + text[match.end():]
+
           renderer = Path('src/legacy/renderer/identiconV10.ts')
           text = renderer.read_text()
-          text = replace_once(
-              text,
-              'import { parityLayer, v9InnerClipRadius } from "./identiconV9Geometry.js";\n',
-              'import { parityLayer, v9InnerClipRadius } from "./identiconV9Geometry.js";\nimport { v10OverlayRadius, v10OverlayScale } from "../../layout-v10.js";\n',
-              'renderer overlay-layout import',
-          )
+          text = replace_once(text, 'import { parityLayer, v9InnerClipRadius } from "./identiconV9Geometry.js";\n', 'import { parityLayer, v9InnerClipRadius } from "./identiconV9Geometry.js";\nimport { v10OverlayRadius, v10OverlayScale } from "../../layout-v10.js";\n', 'renderer overlay-layout import')
           text = replace_once(text, '  aspect: 210,\n', '', 'unused aspect radius')
-          houses = '''function housesLayer(request: AstralIdenticonV10Request, ascendant: number): string {
-  const wheel = request.wheel;
-  if (wheel === null || wheel.points.ascendant === null || wheel.houses.status === "unavailable") return "";
-  const houses: string[] = [];
-  for (let number = 1; number <= 12; number += 1) {
-    const house = wheel.houses.houses[String(number)];
-    if (house === undefined || house.cuspLongitudeDegrees === null || house.endLongitudeDegrees === null) continue;
-    houses.push(`<path d="${sectorPath(house.cuspLongitudeDegrees, house.endLongitudeDegrees, radii.aspect, radii.zodiacInner, ascendant)}" fill="${request.palette.layer0}" fill-opacity="0.018"/>`);
-    const angular = [1, 4, 7, 10].includes(number);
-    houses.push(line(
-      house.cuspLongitudeDegrees,
-      radii.aspect,
-      radii.zodiacInner,
-      ascendant,
-      request.palette.layer1,
-      angular ? 0.78 : 0.28,
-      angular ? 2.6 : 1.25,
-    ));
-  }
-  return `<g id="wheel-houses">${houses.join("")}</g>`;
-}
-
-'''
-          text = replace_once(text, houses, '', 'house layer')
-          point_lines = '''    parts.push(line(point.longitude, radii.zodiacInner - 3, radius + 16, ascendant, request.palette.layer1, 0.23, 1));
-    parts.push(line(point.longitude, radii.zodiacInner - 10, radii.zodiacInner + 1, ascendant, request.palette.layer1, 0.76, 1.8));
-'''
-          text = replace_once(text, point_lines, '', 'planet-position tick and leader lines')
-          text = replace_once(
-              text,
-              '  const scale = (radii.aspect - 8) / v9InnerClipRadius;\n',
-              '  const scale = v10OverlayScale;\n',
-              'overlay scale',
-          )
+          text = sub_once(text, r'function housesLayer\(request: AstralIdenticonV10Request, ascendant: number\): string \{.*?\n\}\n\n(?=async function pointsLayer)', '', 'house layer')
+          text = replace_once(text, '    parts.push(line(point.longitude, radii.zodiacInner - 3, radius + 16, ascendant, request.palette.layer1, 0.23, 1));\n    parts.push(line(point.longitude, radii.zodiacInner - 10, radii.zodiacInner + 1, ascendant, request.palette.layer1, 0.76, 1.8));\n', '', 'planet-position tick and leader lines')
+          text = replace_once(text, '  const scale = (radii.aspect - 8) / v9InnerClipRadius;\n', '  const scale = v10OverlayScale;\n', 'overlay scale')
           old_metadata = '  <metadata>Astral chart identicon visual contract v10. The deterministic natal chart wheel supplies the zodiac, selected houses and real chart points. Aspect lines are deliberately omitted. The aspect area contains only the Solar constellation artwork and the one hundred and twenty-eight RS(168,40) parity stars. The former encoded planetary glyphs, satellites, literal six-sign grid and separate identicon zodiac ring are not rendered.</metadata>'
           new_metadata = '  <metadata>Astral chart identicon visual contract v10. The deterministic natal chart wheel supplies the zodiac ring and real planetary chart points. House divisions, house labels and aspect lines are deliberately omitted. The identicon field expands to the inner edge of the zodiac ring and contains the Solar constellation artwork and the one hundred and twenty-eight RS(168,40) parity stars. The former encoded planetary glyphs, satellites, literal six-sign grid and separate identicon zodiac ring are not rendered.</metadata>'
           text = replace_once(text, old_metadata, new_metadata, 'V10 metadata')
-          text = replace_once(
-              text,
-              '    <clipPath id="identicon-aspect-clip"><circle cx="${centre}" cy="${centre}" r="${radii.aspect - 4}"/></clipPath>',
-              '    <clipPath id="identicon-aspect-clip"><circle cx="${centre}" cy="${centre}" r="${v10OverlayRadius}"/></clipPath>',
-              'overlay clip radius',
-          )
+          text = replace_once(text, '    <clipPath id="identicon-aspect-clip"><circle cx="${centre}" cy="${centre}" r="${radii.aspect - 4}"/></clipPath>', '    <clipPath id="identicon-aspect-clip"><circle cx="${centre}" cy="${centre}" r="${v10OverlayRadius}"/></clipPath>', 'overlay clip radius')
           text = replace_once(text, '  ${housesLayer(request, ascendant)}\n', '', 'house layer render call')
           renderer.write_text(text)
 
           layout = Path('src/layout-v10.ts')
           text = layout.read_text()
-          text = replace_once(
-              text,
-              'export const v10OverlayRadius = v10AspectRadius - 8;\n',
-              'export const v10OverlayRadius = v10ZodiacInnerRadius;\n',
-              'scanner overlay radius',
-          )
+          text = replace_once(text, 'export const v10OverlayRadius = v10AspectRadius - 8;\n', 'export const v10OverlayRadius = v10ZodiacInnerRadius;\n', 'scanner overlay radius')
           layout.write_text(text)
 
           tests = Path('tests/v10.test.ts')
           text = tests.read_text()
-          text = replace_once(
-              text,
-              '''    expect(svg).toContain('id="wheel-houses"');
-    const houseLayer = svg.match(/<g id="wheel-houses">([\\s\\S]*?)<\\/g>/u)?.[1] ?? "";
-    expect(houseLayer).not.toContain("<text");
-''',
-              '''    expect(svg).not.toContain('id="wheel-houses"');
-''',
-              'V10 house-layer regression',
-          )
-          text = replace_once(
-              text,
-              '    expect(count(svg, /data-parity-index=/gu)).toBe(128);\n',
-              '    expect(count(svg, /data-parity-index=/gu)).toBe(128);\n    expect(count(svg, /<line /gu)).toBe(72);\n',
-              'V10 point-line regression',
-          )
-          text = replace_once(
-              text,
-              "  expect(svg).toContain('id=\"wheel-houses\"');\n",
-              "  expect(svg).not.toContain('id=\"wheel-houses\"');\n",
-              'planet collection house expectation',
-          )
+          text = sub_once(text, r'    expect\(svg\)\.toContain\(\'id="wheel-houses"\'\);\n    const houseLayer = [^\n]+\n    expect\(houseLayer\)\.not\.toContain\("<text"\);\n', '    expect(svg).not.toContain(\'id="wheel-houses"\');\n', 'V10 house-layer regression')
+          text = replace_once(text, '    expect(count(svg, /data-parity-index=/gu)).toBe(128);\n', '    expect(count(svg, /data-parity-index=/gu)).toBe(128);\n    expect(count(svg, /<line /gu)).toBe(72);\n', 'V10 point-line regression')
+          text = replace_once(text, '  expect(svg).toContain(\'id="wheel-houses"\');\n', '  expect(svg).not.toContain(\'id="wheel-houses"\');\n', 'planet collection house expectation')
           tests.write_text(text)
 
           scanner = Path('tests/v10-scanner.test.ts')
           text = scanner.read_text()
-          text = replace_once(
-              text,
-              '  v10OuterRingRadius,\n  v10ParityAnchorPoint,\n',
-              '  v10OuterRingRadius,\n  v10OverlayRadius,\n  v10ParityAnchorPoint,\n',
-              'scanner test overlay-radius import',
-          )
-          text = replace_once(
-              text,
-              '  v10ParityStarSizes,\n  v10RingRatio\n',
-              '  v10ParityStarSizes,\n  v10RingRatio,\n  v10ZodiacInnerRadius\n',
-              'scanner test zodiac-inner import',
-          )
+          text = replace_once(text, '  v10OuterRingRadius,\n  v10ParityAnchorPoint,\n', '  v10OuterRingRadius,\n  v10OverlayRadius,\n  v10ParityAnchorPoint,\n', 'scanner test overlay-radius import')
+          text = replace_once(text, '  v10ParityStarSizes,\n  v10RingRatio\n', '  v10ParityStarSizes,\n  v10RingRatio,\n  v10ZodiacInnerRadius\n', 'scanner test zodiac-inner import')
           marker = 'describe("v10 parity-only scanner", () => {\n'
-          addition = '''describe("v10 parity-only scanner", () => {
-  test("expands the scannable field to the zodiac ring", () => {
-    expect(v10OverlayRadius).toBe(v10ZodiacInnerRadius);
-  });
-
-'''
+          addition = 'describe("v10 parity-only scanner", () => {\n  test("expands the scannable field to the zodiac ring", () => {\n    expect(v10OverlayRadius).toBe(v10ZodiacInnerRadius);\n  });\n\n'
           text = replace_once(text, marker, addition, 'scanner overlay-boundary regression')
           scanner.write_text(text)
           PY
