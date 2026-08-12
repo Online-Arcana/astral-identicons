@@ -109,6 +109,8 @@ describe("v10 chart-wheel identicon", () => {
     expect(svg).toContain('data-scannable="v10"');
     expect(svg).toContain('id="wheel-zodiac"');
     expect(svg).toContain('id="wheel-houses"');
+    const houseLayer = svg.match(/<g id="wheel-houses">([\s\S]*?)<\/g>/u)?.[1] ?? "";
+    expect(houseLayer).not.toContain("<text");
     expect(svg).toContain('id="wheel-points"');
     expect(svg).toContain('id="identicon-aspect-overlay"');
     expect(svg).toContain('id="solar-constellation"');

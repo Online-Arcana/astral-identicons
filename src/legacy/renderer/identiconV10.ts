@@ -239,9 +239,6 @@ function housesLayer(request: AstralIdenticonV10Request, ascendant: number): str
       angular ? 0.78 : 0.28,
       angular ? 2.6 : 1.25,
     ));
-    const middle = normalise(house.cuspLongitudeDegrees + forwardDistance(house.cuspLongitudeDegrees, house.endLongitudeDegrees) / 2);
-    const label = polar(middle, 233, ascendant);
-    houses.push(`<text x="${label.x.toFixed(3)}" y="${(label.y + 5).toFixed(3)}" fill="${request.palette.layer1}" fill-opacity="0.65" font-family="Inter,system-ui,sans-serif" font-size="15" font-weight="800" text-anchor="middle">${number}</text>`);
   }
   return `<g id="wheel-houses">${houses.join("")}</g>`;
 }
