@@ -111,10 +111,11 @@ test("browser package API renders a genuine ASTRPKG5 chart identicon", async () 
     expect(svg).toContain('id="wheel-houses"');
     expect(svg).toContain('id="wheel-points"');
     expect(svg).toContain('id="reed-solomon-stars"');
+    expect(svg).toContain('data-code-stars="128"');
     expect(requested.some((url) => url.includes("/assets/constellations/capricorn.svg"))).toBe(true);
-    expect(requested.some((url) => url.endsWith("/assets/decor/star.svg"))).toBe(true);
     expect(requested.some((url) => url.includes("/assets/astrology-glyphs/svg/"))).toBe(true);
     expect(requested.some((url) => url.includes("/assets/sigils/"))).toBe(false);
+    expect(requested.some((url) => url.endsWith("/assets/decor/star.svg"))).toBe(false);
   } finally {
     globalThis.fetch = originalFetch;
   }
