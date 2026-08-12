@@ -37,7 +37,7 @@ jobs:
             pointGlyphVisible,
             type PointId,
             type WheelGlyphs,
-          } from "../../../vendor/astral-chart-wheel/dist/wheel.js";'''
+          } from "../../../vendor/astral-chart-wheel/dist/wheel/index.js";'''
               if old_import not in text:
                   raise SystemExit('V10 PointId import changed unexpectedly')
               text = text.replace(old_import, new_import, 1)
