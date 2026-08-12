@@ -14,7 +14,9 @@ export const v10Centre = v10Canvas / 2;
 export const v10OuterRingRadius = 372;
 export const v10ZodiacInnerRadius = 316;
 export const v10AspectRadius = 210;
-export const v10OverlayRadius = v10ZodiacInnerRadius;
+export const v10OverlayGutter = 24;
+export const v10OverlayRadius = v10ZodiacInnerRadius - v10OverlayGutter;
+export const v10OverlayClipRadius = v10OverlayRadius + 6;
 export const v10OverlayScale = v10OverlayRadius / v9InnerClipRadius;
 export const v10RingRatio = v10ZodiacInnerRadius / v10OuterRingRadius;
 

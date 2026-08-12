@@ -8,7 +8,11 @@ import {
   signLabel,
 } from "./identiconCommon.js";
 import { parityLayer, v9InnerClipRadius } from "./identiconV9Geometry.js";
-import { v10OverlayRadius, v10OverlayScale } from "../../layout-v10.js";
+import {
+  v10OverlayClipRadius,
+  v10OverlayRadius,
+  v10OverlayScale,
+} from "../../layout-v10.js";
 import type {
   AstralIdenticonAssetSource,
   AstralIdenticonV10Request,
@@ -288,9 +292,9 @@ export async function renderAstralIdenticonV10(
   return `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="${canvas}" height="${canvas}" viewBox="0 0 ${canvas} ${canvas}" role="img" aria-label="${escapeXml(title)}" data-input="${escapeXml(JSON.stringify(request.input))}" data-palette-index="${request.paletteIndex}" data-code-version="${request.recordVersion}" data-visual-version="10" data-scannable="v10" data-identity-hex="${request.identityHex}">
   <title>${escapeXml(title)}</title>
-  <metadata>Astral chart identicon visual contract v10. The deterministic natal chart wheel supplies the zodiac ring and real planetary chart points. House divisions, house labels and aspect lines are deliberately omitted. The identicon field expands to the inner edge of the zodiac ring and contains the Solar constellation artwork and the one hundred and twenty-eight RS(168,40) parity stars. The former encoded planetary glyphs, satellites, literal six-sign grid and separate identicon zodiac ring are not rendered.</metadata>
+  <metadata>Astral chart identicon visual contract v10. The deterministic natal chart wheel supplies the zodiac ring and real planetary chart points. House divisions, house labels and aspect lines are deliberately omitted. The identicon field keeps a clear gutter inside the zodiac ring and contains the Solar constellation artwork and the one hundred and twenty-eight RS(168,40) parity stars. The former encoded planetary glyphs, satellites, literal six-sign grid and separate identicon zodiac ring are not rendered.</metadata>
   <defs>
-    <clipPath id="identicon-aspect-clip"><circle cx="${centre}" cy="${centre}" r="${v10OverlayRadius}"/></clipPath>
+    <clipPath id="identicon-aspect-clip"><circle cx="${centre}" cy="${centre}" r="${v10OverlayClipRadius}"/></clipPath>
   </defs>
   <rect id="background" x="0" y="0" width="${canvas}" height="${canvas}" fill="${request.palette.background}"/>
   <circle id="wheel-frame" cx="${centre}" cy="${centre}" r="${radii.outer}" fill="${request.palette.background}" stroke="${request.palette.layer1}" stroke-opacity="0.62" stroke-width="2"/>
