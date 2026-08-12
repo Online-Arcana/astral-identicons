@@ -3,6 +3,7 @@ name: Verify astral-identicons split
 on:
   push:
     branches:
+      - main
       - agent/fix-v9-pristine-roundtrip
       - agent/split-modules
   pull_request:

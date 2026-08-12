@@ -4,6 +4,12 @@
   "private": true,
   "type": "module",
   "license": "MIT",
+  "exports": {
+    "./browser": {
+      "types": "./src/browser-api.d.ts",
+      "default": "./src/browser-api.js"
+    }
+  },
   "scripts": {
     "start": "bun run src/server.ts",
     "dev": "bun --watch src/server.ts",
