@@ -5,6 +5,9 @@ import { normaliseAstralTransport, randomAstralPreview } from "./random-preview.
 const readyFiles = new WeakSet<File>();
 let randomAction: (() => void) | null = null;
 
+const blobBuffer = (bytes: Uint8Array): ArrayBuffer =>
+  bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+
 const setSelectedFile = (input: HTMLInputElement, file: File): void => {
   const transfer = new DataTransfer();
   transfer.items.add(file);
@@ -81,7 +84,7 @@ const normaliseSelection = async (input: HTMLInputElement, file: File): Promise<
     const inner = normaliseAstralTransport(bytes);
     const selected = inner === bytes
       ? file
-      : new File([inner], file.name, { type: file.type || "application/octet-stream", lastModified: file.lastModified });
+      : new File([blobBuffer(inner)], file.name, { type: file.type || "application/octet-stream", lastModified: file.lastModified });
     readyFiles.add(selected);
     if (selected !== file) setSelectedFile(input, selected);
     input.dispatchEvent(new Event("change", { bubbles: true }));
@@ -178,7 +181,7 @@ const loadRandomChart = async (): Promise<void> => {
   try {
     const preview = await randomAstralPreview(document.baseURI);
     const name = `RANDOM-${preview.calculation.birth.date}-${(preview.calculation.birth.time ?? "0000").replace(":", "")}.astral`;
-    const file = new File([preview.bytes], name, { type: "application/octet-stream" });
+    const file = new File([blobBuffer(preview.bytes)], name, { type: "application/octet-stream" });
     readyFiles.add(file);
     setSelectedFile(input, file);
     showPositions(preview.source);

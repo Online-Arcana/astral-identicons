@@ -3,10 +3,7 @@ import {
   webPorts,
   type Calculation,
 } from "../vendor/astral-chart-wheel/dist/web.js";
-import {
-  wheelData,
-  type PublicWheelMeta,
-} from "../vendor/astral-chart-wheel/dist/wheel.js";
+import type { PublicWheelMeta } from "../vendor/astral-chart-wheel/dist/wheel/public.js";
 import { astralSource, type AstralIdenticonSource } from "./astral.ts";
 import { signs, type Sign } from "./sign.ts";
 
@@ -72,13 +69,12 @@ const longitude = (value: number | null, label: string): number => {
 const signAt = (value: number): Sign => signs[Math.floor(((value % 360) + 360) % 360 / 30)]!;
 
 export const publicWheelFromCalculation = (calculation: Calculation): PublicWheelMeta => {
-  const data = wheelData(calculation);
-  const selected = data.houses[data.primaryHouseSystem];
+  const selected = calculation.system.houses[calculation.settings.primaryHouseSystem];
   return {
     schema: "astral-public-wheel/1.0.0",
-    calculationFingerprint: data.fingerprint,
-    primaryHouseSystem: data.primaryHouseSystem,
-    points: Object.fromEntries(Object.entries(data.points).map(([id, point]) => [
+    calculationFingerprint: calculation.provenance.calculationFingerprint,
+    primaryHouseSystem: calculation.settings.primaryHouseSystem,
+    points: Object.fromEntries(Object.entries(calculation.system.points).map(([id, point]) => [
       id,
       point.position.value?.longitudeDegrees ?? null,
     ])) as PublicWheelMeta["points"],
@@ -93,7 +89,7 @@ export const publicWheelFromCalculation = (calculation: Calculation): PublicWhee
         },
       ])) as PublicWheelMeta["houses"]["houses"],
     },
-    aspects: data.aspects.map((aspect) => ({ ...aspect })),
+    aspects: calculation.system.aspects.map((aspect) => ({ ...aspect })),
   };
 };
 
