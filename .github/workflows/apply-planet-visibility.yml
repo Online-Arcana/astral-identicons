@@ -61,6 +61,9 @@ jobs:
             .flatMap(([rawId, longitude]) => longitude === null
               ? []
               : [{ id: rawId as PointId, longitude }])'''
+              # YAML block indentation is stripped by the runner. Match the actual
+              # four/two-space TypeScript continuation indentation explicitly.
+              old_layout = old_layout.replace('      .flatMap', '    .flatMap').replace('        ? []', '      ? []').replace('        : [{', '      : [{')
               new_layout = '''  const points = Object.entries(request.wheel.points)
             .flatMap(([rawId, longitude]) => {
               const id = rawId as PointId;
@@ -68,6 +71,7 @@ jobs:
                 ? []
                 : [{ id, longitude }];
             })'''
+              new_layout = new_layout.replace('      .flatMap', '    .flatMap').replace('        const id', '      const id').replace('        return longitude', '      return longitude').replace('          ? []', '        ? []').replace('          : [{', '        : [{').replace('      })', '    })')
               if old_layout not in text:
                   raise SystemExit('V10 point layout changed unexpectedly')
               text = text.replace(old_layout, new_layout, 1)
