@@ -1,9 +1,35 @@
+import type { PlaceData } from "../vendor/astral-chart-wheel/dist/web.js";
 import { astralSource, type AstralIdenticonSource } from "./astral.ts";
+import { birthAstralPreview, normaliseAstralTransport } from "./random-preview.ts";
+import { rawPublicKey } from "./seed-value.ts";
 import { label, signs, type Sign } from "./sign.ts";
-import { normaliseAstralTransport, randomAstralPreview } from "./random-preview.ts";
 
 const readyFiles = new WeakSet<File>();
-let randomAction: (() => void) | null = null;
+
+interface CountryRow {
+  readonly name: string;
+  readonly iso2: string;
+  readonly region: string;
+  readonly subregion: string;
+}
+
+interface StateRow {
+  readonly name: string;
+  readonly iso2: string;
+  readonly timezone: string | null;
+}
+
+interface CityRow {
+  readonly id: number;
+  readonly name: string;
+  readonly latitude: string;
+  readonly longitude: string;
+  readonly timezone: string | null;
+}
+
+interface CountryMeta extends CountryRow {
+  readonly timezones: ReadonlyArray<{ readonly zoneName: string }>;
+}
 
 const blobBuffer = (bytes: Uint8Array): ArrayBuffer =>
   bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
@@ -42,18 +68,20 @@ const displayedPoints = {
   imumCoeli: "imum_coeli",
 } as const;
 
+const clearPositions = (): void => {
+  for (const output of document.querySelectorAll<HTMLElement>(".chart-position")) output.remove();
+};
+
 const showPositions = (source: AstralIdenticonSource): void => {
+  clearPositions();
   for (const [field, point] of Object.entries(displayedPoints) as Array<[keyof typeof displayedPoints, typeof displayedPoints[keyof typeof displayedPoints]]>) {
     const select = document.querySelector<HTMLSelectElement>(`#${field}`);
     if (select === null) continue;
     const wrapper = select.closest<HTMLElement>(".field");
     if (wrapper === null) continue;
-    let output = wrapper.querySelector<HTMLElement>(".chart-position");
-    if (output === null) {
-      output = document.createElement("small");
-      output.className = "chart-position";
-      wrapper.append(output);
-    }
+    const output = document.createElement("small");
+    output.className = "chart-position";
+    wrapper.append(output);
     const longitude = source.wheel?.points[point] ?? null;
     if (longitude === null) {
       output.textContent = "Exact glyph longitude is not present in this package.";
@@ -93,9 +121,9 @@ const normaliseSelection = async (input: HTMLInputElement, file: File): Promise<
   }
 };
 
-// The current TEST chart transport is a 9-byte ASTRTEST1 marker followed by a
-// genuine ASTRPKG container. Normalise it before the existing loader sees the
-// file, while leaving ordinary ASTRPKG4/5 uploads byte-for-byte untouched.
+// The TEST chart transport can be a 9-byte ASTRTEST1 marker followed by a
+// genuine ASTRPKG container. Normalise it before the ordinary loader sees it,
+// while leaving normal ASTRPKG4/5 uploads byte-for-byte untouched.
 document.addEventListener("change", (event) => {
   const input = event.target;
   if (!(input instanceof HTMLInputElement) || input.id !== "astral-file") return;
@@ -111,23 +139,44 @@ document.addEventListener("change", (event) => {
   void normaliseSelection(input, file);
 }, true);
 
-// Install the replacement random-chart action before web.ts installs the old
-// seed-only button handler. Capture phase prevents that legacy handler from
-// clearing the wheel after we have calculated a complete chart.
-document.addEventListener("click", (event) => {
-  const target = event.target;
-  if (!(target instanceof Element)) return;
-  const button = target.closest<HTMLButtonElement>("#random");
-  if (button === null || randomAction === null) return;
-  event.preventDefault();
-  event.stopImmediatePropagation();
-  randomAction();
-}, true);
-
 await import("./web.ts");
 
 const style = document.createElement("style");
 style.textContent = `
+  .birth-chart {
+    margin: clamp(1rem, 3vw, 1.5rem);
+    margin-bottom: 0;
+    padding: 1rem;
+    border: 1px solid #30303f;
+    border-radius: 1rem;
+    background: #12121b;
+  }
+  .birth-chart h2 {
+    margin: 0 0 .35rem;
+    font-size: 1.05rem;
+    letter-spacing: -.02em;
+  }
+  .birth-copy {
+    margin: 0 0 .9rem;
+    color: #aaaabb;
+    font-size: .84rem;
+    line-height: 1.45;
+  }
+  .birth-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0 .7rem;
+  }
+  .birth-grid .wide { grid-column: 1 / -1; }
+  .birth-chart button { width: 100%; }
+  .birth-status {
+    min-height: 1.25em;
+    margin: .65rem 0 0;
+    color: #aaaabb;
+    font-size: .82rem;
+    line-height: 1.4;
+  }
+  .birth-status.error { color: #ff9eaa; }
   .chart-position {
     display: block;
     margin-top: -0.1rem;
@@ -136,62 +185,234 @@ style.textContent = `
     line-height: 1.35;
   }
   .chart-position.mismatch { color: #ff9eaa; }
-  select[data-derived-chart-field="true"] {
-    pointer-events: none;
-    cursor: default;
-    opacity: .92;
+  @media (max-width: 460px) {
+    .birth-grid { grid-template-columns: 1fr; }
+    .birth-grid .wide { grid-column: auto; }
   }
-  input[readonly] { cursor: default; }
 `;
 document.head.append(style);
 
+const form = document.querySelector<HTMLFormElement>("#builder");
 const seed = document.querySelector<HTMLInputElement>("#seed");
-if (seed !== null) {
-  seed.readOnly = true;
-  seed.setAttribute("aria-readonly", "true");
-  seed.title = "Derived from the current packaged chart identity";
+const astralInput = document.querySelector<HTMLInputElement>("#astral-file");
+if (form === null || seed === null || astralInput === null) {
+  throw new Error("Identicon builder controls are unavailable");
 }
 
-for (const select of document.querySelectorAll<HTMLSelectElement>("#sign-fields select")) {
-  select.dataset["derivedChartField"] = "true";
-  select.tabIndex = -1;
-  select.setAttribute("aria-readonly", "true");
-  select.title = "Derived from the exact ecliptic longitude shown below";
-}
-
-const randomButton = document.querySelector<HTMLButtonElement>("#random");
-if (randomButton !== null) randomButton.textContent = "New random chart";
 const heading = document.querySelector<HTMLElement>("main > header h1");
 if (heading !== null) heading.textContent = "Astrological identicon";
 const introduction = document.querySelector<HTMLElement>("main > header p");
 if (introduction !== null) {
-  introduction.textContent = "Preview a complete V10 identicon from a real deterministic random chart, or load a packaged .astral file. The six displayed signs and their glyph positions come from the same exact chart longitudes.";
+  introduction.textContent = "Build a V10 chart-wheel identicon from explicit birth data, load an existing packaged .astral file, or edit the seed and six signs manually. Manual fields are never replaced unless you explicitly calculate or load a chart.";
 }
 
-const loadRandomChart = async (): Promise<void> => {
-  const input = document.querySelector<HTMLInputElement>("#astral-file");
-  if (input === null) throw new Error("Packaged astral file input is unavailable");
-  if (randomButton !== null) randomButton.disabled = true;
-  const status = document.querySelector<HTMLParagraphElement>("#status");
-  if (status !== null) {
-    status.textContent = "Calculating a complete random chart with real planetary and angle longitudes…";
-    status.className = "status";
-  }
+const birth = document.createElement("section");
+birth.className = "birth-chart";
+birth.setAttribute("aria-labelledby", "birth-heading");
+birth.innerHTML = `
+  <h2 id="birth-heading">Birth chart</h2>
+  <p class="birth-copy">Date, exact local time and birthplace are calculated through the same deterministic astrology core used by the V10 wheel. Calculating updates the six signs from the resulting longitudes while keeping the current public-key seed.</p>
+  <div class="birth-grid">
+    <div class="field">
+      <label for="birth-date">Date of birth</label>
+      <input id="birth-date" type="date" autocomplete="bday">
+    </div>
+    <div class="field">
+      <label for="birth-time">Time of birth</label>
+      <input id="birth-time" type="time" step="60">
+    </div>
+    <div class="field wide">
+      <label for="birth-country">Country</label>
+      <select id="birth-country"><option value="">Choose country</option></select>
+    </div>
+    <div class="field">
+      <label for="birth-region">State / region</label>
+      <select id="birth-region" disabled><option value="">Choose region</option></select>
+    </div>
+    <div class="field">
+      <label for="birth-city">City</label>
+      <select id="birth-city" disabled><option value="">Choose city</option></select>
+    </div>
+    <div class="wide">
+      <button id="birth-calculate" class="secondary" type="button" disabled>Calculate birth chart</button>
+      <p id="birth-status" class="birth-status" aria-live="polite">Loading birthplace catalogue…</p>
+    </div>
+  </div>
+`;
+form.parentElement?.insertBefore(birth, form);
 
+const birthDate = birth.querySelector<HTMLInputElement>("#birth-date")!;
+const birthTime = birth.querySelector<HTMLInputElement>("#birth-time")!;
+const countrySelect = birth.querySelector<HTMLSelectElement>("#birth-country")!;
+const regionSelect = birth.querySelector<HTMLSelectElement>("#birth-region")!;
+const citySelect = birth.querySelector<HTMLSelectElement>("#birth-city")!;
+const calculateButton = birth.querySelector<HTMLButtonElement>("#birth-calculate")!;
+const birthStatus = birth.querySelector<HTMLParagraphElement>("#birth-status")!;
+
+let countries: CountryRow[] = [];
+let regions: StateRow[] = [];
+let cities: CityRow[] = [];
+
+const placeJson = async <T>(path: string): Promise<T> => {
+  const response = await fetch(new URL(`assets/places/${path}`, document.baseURI), {
+    cache: "force-cache",
+    credentials: "omit",
+  });
+  if (!response.ok) throw new Error(`Birthplace data ${path} failed with HTTP ${response.status}`);
+  return response.json() as Promise<T>;
+};
+
+const option = (value: string, text: string): HTMLOptionElement => {
+  const item = document.createElement("option");
+  item.value = value;
+  item.textContent = text;
+  return item;
+};
+
+const resetSelect = (select: HTMLSelectElement, placeholder: string): void => {
+  select.replaceChildren(option("", placeholder));
+  select.value = "";
+};
+
+const updateCalculateState = (): void => {
+  calculateButton.disabled = !birthDate.value || !birthTime.value || !countrySelect.value || !regionSelect.value || !citySelect.value;
+};
+
+const showBirthError = (cause: unknown): void => {
+  birthStatus.textContent = cause instanceof Error ? cause.message : String(cause);
+  birthStatus.className = "birth-status error";
+};
+
+const loadCountries = async (): Promise<void> => {
   try {
-    const preview = await randomAstralPreview(document.baseURI);
-    const name = `RANDOM-${preview.calculation.birth.date}-${(preview.calculation.birth.time ?? "0000").replace(":", "")}.astral`;
-    const file = new File([blobBuffer(preview.bytes)], name, { type: "application/octet-stream" });
-    readyFiles.add(file);
-    setSelectedFile(input, file);
-    showPositions(preview.source);
-    input.dispatchEvent(new Event("change", { bubbles: true }));
+    countries = (await placeJson<CountryRow[]>("countries.json"))
+      .slice()
+      .sort((a, b) => a.name.localeCompare(b.name, "en-GB"));
+    resetSelect(countrySelect, "Choose country");
+    for (const country of countries) countrySelect.append(option(country.iso2, country.name));
+    countrySelect.disabled = false;
+    birthStatus.textContent = "Choose a date, exact local time and birthplace. Nothing is calculated until you press Calculate birth chart.";
+    birthStatus.className = "birth-status";
   } catch (cause: unknown) {
-    statusError(cause);
-  } finally {
-    if (randomButton !== null) randomButton.disabled = false;
+    countrySelect.disabled = true;
+    showBirthError(cause);
   }
 };
 
-randomAction = () => void loadRandomChart();
-await loadRandomChart();
+countrySelect.addEventListener("change", () => {
+  resetSelect(regionSelect, "Choose region");
+  resetSelect(citySelect, "Choose city");
+  regionSelect.disabled = true;
+  citySelect.disabled = true;
+  regions = [];
+  cities = [];
+  updateCalculateState();
+  const country = countrySelect.value;
+  if (!country) return;
+
+  birthStatus.textContent = "Loading regions…";
+  birthStatus.className = "birth-status";
+  void placeJson<StateRow[]>(`states/${country}.json`).then((loaded) => {
+    if (countrySelect.value !== country) return;
+    regions = loaded.slice().sort((a, b) => a.name.localeCompare(b.name, "en-GB"));
+    for (const region of regions) regionSelect.append(option(region.iso2, region.name));
+    regionSelect.disabled = regions.length === 0;
+    birthStatus.textContent = regions.length > 0 ? "Choose a state or region." : "No regions are available for this country in the birthplace catalogue.";
+  }).catch(showBirthError);
+});
+
+regionSelect.addEventListener("change", () => {
+  resetSelect(citySelect, "Choose city");
+  citySelect.disabled = true;
+  cities = [];
+  updateCalculateState();
+  const country = countrySelect.value;
+  const region = regionSelect.value;
+  if (!country || !region) return;
+
+  birthStatus.textContent = "Loading cities…";
+  birthStatus.className = "birth-status";
+  void placeJson<CityRow[]>(`cities/${country}-${region}.json`).then((loaded) => {
+    if (countrySelect.value !== country || regionSelect.value !== region) return;
+    cities = loaded.slice().sort((a, b) => a.name.localeCompare(b.name, "en-GB"));
+    for (const city of cities) citySelect.append(option(String(city.id), city.name));
+    citySelect.disabled = cities.length === 0;
+    birthStatus.textContent = cities.length > 0 ? "Choose the city of birth." : "No cities are available for this region in the birthplace catalogue.";
+  }).catch(showBirthError);
+});
+
+for (const control of [birthDate, birthTime, citySelect]) {
+  control.addEventListener("input", updateCalculateState);
+  control.addEventListener("change", updateCalculateState);
+}
+
+const selectedPlace = async (): Promise<PlaceData> => {
+  const country = countries.find((item) => item.iso2 === countrySelect.value);
+  const region = regions.find((item) => item.iso2 === regionSelect.value);
+  const city = cities.find((item) => String(item.id) === citySelect.value);
+  if (country === undefined || region === undefined || city === undefined) {
+    throw new Error("Choose a complete birthplace before calculating the chart");
+  }
+
+  const meta = await placeJson<CountryMeta>(`country/${country.iso2}.json`);
+  const timeZone = city.timezone
+    ?? region.timezone
+    ?? (meta.timezones.length === 1 ? meta.timezones[0]?.zoneName ?? null : null);
+  if (!timeZone) {
+    throw new Error(`The birthplace catalogue has no unambiguous timezone for ${city.name}`);
+  }
+
+  const latitude = Number(city.latitude);
+  const longitude = Number(city.longitude);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+    throw new Error(`The birthplace catalogue has invalid coordinates for ${city.name}`);
+  }
+
+  return {
+    id: `ui:${country.iso2}:${region.iso2}:${city.id}`,
+    continent: country.region,
+    subcontinent: country.subregion || null,
+    country: { code: country.iso2, name: country.name },
+    region: { code: region.iso2, name: region.name },
+    city: { name: city.name },
+    latitude,
+    longitude,
+    elevationMetres: null,
+    timeZone,
+  };
+};
+
+calculateButton.addEventListener("click", () => {
+  calculateButton.disabled = true;
+  birthStatus.textContent = "Calculating deterministic natal positions…";
+  birthStatus.className = "birth-status";
+
+  void (async () => {
+    const rawKey = rawPublicKey(seed.value.trim());
+    const place = await selectedPlace();
+    const preview = await birthAstralPreview(document.baseURI, {
+      date: birthDate.value,
+      time: birthTime.value,
+      place,
+      rawPublicKey: rawKey,
+    });
+    const name = `BIRTH-${preview.calculation.birth.date}-${(preview.calculation.birth.time ?? "0000").replace(":", "")}.astral`;
+    const file = new File([blobBuffer(preview.bytes)], name, { type: "application/octet-stream" });
+    readyFiles.add(file);
+    setSelectedFile(astralInput, file);
+    showPositions(preview.source);
+    astralInput.dispatchEvent(new Event("change", { bubbles: true }));
+    birthStatus.textContent = `Calculated ${place.city.name}, ${place.country.name} at ${birthDate.value} ${birthTime.value} (${place.timeZone}). The seed was preserved and the six signs now come from the calculated V10 longitudes.`;
+    birthStatus.className = "birth-status";
+  })().catch(showBirthError).finally(() => {
+    updateCalculateState();
+  });
+});
+
+form.addEventListener("input", (event) => {
+  const target = event.target;
+  if (target instanceof HTMLInputElement && target.id === "astral-file") return;
+  clearPositions();
+});
+
+void loadCountries();
