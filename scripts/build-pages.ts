@@ -5,6 +5,7 @@ import { page } from "../src/page.ts";
 const root = `${import.meta.dir}/..`;
 const outputRoot = `${root}/dist`;
 const sharedAssets = `${root}/vendor/astral-chart-wheel/assets`;
+const placeAssets = `${root}/vendor/astral-chart-wheel/vendor/places/src/countries-browser/data`;
 
 await rm(outputRoot, { recursive: true, force: true });
 await mkdir(outputRoot, { recursive: true });
@@ -48,6 +49,7 @@ await cp(`${root}/public/responsive.css`, `${outputRoot}/responsive.css`);
 await cp(`${root}/assets`, `${outputRoot}/assets`, { recursive: true });
 await cp(`${sharedAssets}/constellations`, `${outputRoot}/assets/constellations`, { recursive: true });
 await cp(`${sharedAssets}/astrology-glyphs`, `${outputRoot}/assets/astrology-glyphs`, { recursive: true });
+await cp(placeAssets, `${outputRoot}/assets/places`, { recursive: true });
 await mkdir(`${outputRoot}/assets/decor`, { recursive: true });
 await cp(`${sharedAssets}/reed-solomon/star.svg`, `${outputRoot}/assets/decor/star.svg`);
 await Bun.write(`${outputRoot}/.nojekyll`, "");
