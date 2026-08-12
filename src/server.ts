@@ -7,7 +7,8 @@ import type { RawIdenticonInput } from "./types.ts";
 
 const root = `${import.meta.dir}/..`;
 const assetsRoot = `${root}/assets`;
-const assets = fileAssets(assetsRoot, sharedWheelAssets(`${root}/vendor/astral-chart-wheel`));
+const sharedRoot = `${root}/vendor/astral-chart-wheel`;
+const assets = fileAssets(assetsRoot, sharedWheelAssets(sharedRoot));
 const sourceIndex = await Bun.file(`${root}/public/index.html`).text();
 const index = page(sourceIndex, {
   script: "/app.js",
@@ -15,7 +16,7 @@ const index = page(sourceIndex, {
 });
 const responsiveStyle = await Bun.file(`${root}/public/responsive.css`).text();
 const build = await Bun.build({
-  entrypoints: [`${root}/src/web.ts`],
+  entrypoints: [`${root}/src/page-entry.ts`],
   target: "browser",
   format: "esm",
   minify: false,
@@ -37,7 +38,36 @@ function errorResponse(error: unknown): Response {
   return json({ error: message }, 400);
 }
 
+const safeRelative = (value: string): string | null => {
+  const decoded = decodeURIComponent(value).replace(/^\/+/, "");
+  if (decoded.length === 0 || decoded.includes("..") || !/^[A-Za-z0-9_./-]+$/u.test(decoded)) return null;
+  return decoded;
+};
+
+async function staticFile(path: string, contentType: string): Promise<Response> {
+  const file = Bun.file(path);
+  if (!await file.exists()) return new Response("Not found", { status: 404 });
+  return new Response(file, {
+    headers: {
+      "content-type": contentType,
+      "cache-control": "no-cache"
+    }
+  });
+}
+
 async function asset(pathname: string): Promise<Response> {
+  if (pathname.startsWith("/assets/preview-places/")) {
+    const relative = safeRelative(pathname.slice("/assets/preview-places/".length));
+    if (relative === null) return new Response("Not found", { status: 404 });
+    return staticFile(`${root}/assets/preview-places/${relative}`, "application/json; charset=utf-8");
+  }
+
+  if (pathname.startsWith("/assets/astrology-glyphs/")) {
+    const relative = safeRelative(pathname.slice("/assets/astrology-glyphs/".length));
+    if (relative === null) return new Response("Not found", { status: 404 });
+    return staticFile(`${sharedRoot}/assets/astrology-glyphs/${relative}`, "image/svg+xml; charset=utf-8");
+  }
+
   if (pathname === "/assets/decor/star.svg") {
     const source = await assets.star();
 

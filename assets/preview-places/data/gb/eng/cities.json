@@ -1,0 +1,12 @@
+[
+  {
+    "id": 1,
+    "name": "Greenwich",
+    "state_id": 1,
+    "state_code": "ENG",
+    "country_code": "GB",
+    "latitude": "51.4769",
+    "longitude": "0.0005",
+    "timezone": "Europe/London"
+  }
+]

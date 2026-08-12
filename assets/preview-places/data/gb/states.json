@@ -1,0 +1,9 @@
+[
+  {
+    "id": 1,
+    "name": "England",
+    "country_code": "GB",
+    "iso2": "ENG",
+    "timezone": "Europe/London"
+  }
+]

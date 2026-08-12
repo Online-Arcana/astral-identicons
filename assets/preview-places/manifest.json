@@ -1,0 +1,5 @@
+{
+  "schema": "astral-browser-places/1.0.0",
+  "countries": { "GB": "gb" },
+  "states": { "GB": { "ENG": "eng" } }
+}

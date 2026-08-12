@@ -10,7 +10,7 @@ await rm(outputRoot, { recursive: true, force: true });
 await mkdir(outputRoot, { recursive: true });
 
 const build = await Bun.build({
-  entrypoints: [`${root}/src/web.ts`],
+  entrypoints: [`${root}/src/page-entry.ts`],
   target: "browser",
   format: "esm",
   minify: true,
