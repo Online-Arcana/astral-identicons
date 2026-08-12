@@ -30,4 +30,11 @@ describe("fresh page identity", () => {
     expect(source).toContain("Load an ASTRPKG5 .astral file to render the current chart-wheel identicon");
     expect(source).not.toContain("the preview uses the chart-wheel shell without inventing houses or planetary positions");
   });
+
+  test("does not clear the packaged file before its change handler can read it", () => {
+    expect(source).toContain('if (event.target === astralFile) return;');
+    expect(source).toContain('const selected = astralFile.files?.[0]');
+    expect(source.indexOf('if (event.target === astralFile) return;'))
+      .toBeLessThan(source.indexOf('astralFile.value = "";', source.indexOf('form.addEventListener("input"')));
+  });
 });
