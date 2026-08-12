@@ -1,17 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import type { PublicWheelMeta } from "../vendor/astral-chart-wheel/dist/index.js";
-import { buildIdenticon } from "../src/build.ts";
-import { exportedV9Svg } from "../src/scan-v9-svg.ts";
+import { buildIdenticon } from "../src/build-current.ts";
 import { input } from "../src/input.ts";
-import {
-  recoverV9Record,
-  v9DataByteCount,
-  v9Parity,
-  v9ParityByteCount,
-  type V9ByteObservation
-} from "../src/record-v9.ts";
-import type { AssetSource } from "../src/types.ts";
+import { exportedV9Svg } from "../src/legacy/exported.ts";
+import { recoverV9Record, v9DataByteCount, v9Parity, v9ParityByteCount } from "../src/record-v9.ts";
+import type { AstralPublicWheel } from "../src/astral-public.ts";
+import { testAssets } from "./fixtures/assets.ts";
 
+const assets = testAssets();
 const sample = input({
   seed: "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
   solar: "capricorn",
@@ -22,89 +17,55 @@ const sample = input({
   imumCoeli: "aries"
 });
 
-const simpleAsset = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><path id="shape" fill="#000" stroke="none" d="M0 0h10v10z"/></svg>`;
-const assets: AssetSource = {
-  constellation: async () => simpleAsset,
-  sigil: async () => simpleAsset,
-  star: async () => simpleAsset,
-  astrologyGlyph: async () => simpleAsset
-};
-
-const points: PublicWheelMeta["points"] = {
-  sun: 285.25,
-  moon: 166.5,
-  mercury: 301.2,
-  venus: 274.1,
-  mars: 52.8,
-  jupiter: 138.4,
-  saturn: 303.7,
-  uranus: 282.2,
-  neptune: 284.5,
-  pluto: 229.3,
-  north_node_true: 289.1,
-  south_node_true: 109.1,
-  north_node_mean: null,
-  south_node_mean: null,
-  ascendant: 291.75,
-  descendant: 111.75,
-  midheaven: 194.2,
-  imum_coeli: 14.2,
-  vertex: 148.6,
-  antivertex: 328.6,
-  east_point: 300.4,
-  part_of_fortune: 173.9,
-  part_of_spirit: 49.6,
-  lilith_mean: 267.2,
-  lilith_true: 271.8
-};
-
-const houses = Object.fromEntries(
-  Array.from({ length: 12 }, (_unused, index) => {
-    const number = index + 1;
-    const cusp = (291.75 + index * 30) % 360;
-    return [String(number), {
-      number,
-      cuspLongitudeDegrees: cusp,
-      endLongitudeDegrees: (cusp + 30) % 360
-    }];
-  })
-) as PublicWheelMeta["houses"]["houses"];
-
-const wheel: PublicWheelMeta = {
+const wheel = {
   schema: "astral-public-wheel/1.0.0",
-  calculationFingerprint: "v10-test-fixture",
+  calculationFingerprint: "test",
   primaryHouseSystem: "placidus",
-  points,
-  houses: {
-    status: "calculated",
-    houses
+  points: {
+    sun: 288,
+    moon: 170,
+    mercury: 302,
+    venus: 252,
+    mars: 23,
+    jupiter: 116,
+    saturn: 337,
+    uranus: 314,
+    neptune: 301,
+    pluto: 244,
+    north_node_true: 20,
+    south_node_true: 200,
+    north_node_mean: 21,
+    south_node_mean: 201,
+    ascendant: 280,
+    descendant: 100,
+    midheaven: 190,
+    imum_coeli: 10,
+    vertex: 222,
+    antivertex: 42,
+    east_point: 276,
+    part_of_fortune: 153,
+    part_of_spirit: 333,
+    lilith_mean: 88,
+    lilith_true: 91
   },
-  aspects: [{
-    id: "sun:moon:trine",
-    a: "sun",
-    b: "moon",
-    kind: "trine",
-    class: "major",
-    character: "flowing"
-  }]
-};
-
-function missing(): V9ByteObservation {
-  return { value: null, confidence: 0 };
-}
-
-function observed(value: number): V9ByteObservation {
-  return { value, confidence: 0.99 };
-}
+  houses: { status: "unavailable", houses: {} },
+  aspects: []
+} as unknown as AstralPublicWheel;
 
 function count(source: string, expression: RegExp): number {
   return [...source.matchAll(expression)].length;
 }
 
-describe("v10 chart-wheel identicon", () => {
-  test("renders the natal wheel with only constellation art and RS stars in the aspect area", async () => {
-    const svg = await buildIdenticon(sample, assets, wheel);
+function observed(value: number) {
+  return { value, confidence: 1 };
+}
+function missing() {
+  return { value: null, confidence: 0 };
+}
 
+describe("visual V10", () => {
+  test("renders the canonical astrology shell and complete RS field", async () => {
+    const svg = await buildIdenticon(sample, assets, wheel);
     expect(svg).toContain('data-visual-version="10"');
     expect(svg).toContain('data-scannable="v10"');
     expect(svg).toContain('id="wheel-zodiac"');
@@ -137,20 +98,24 @@ describe("v10 chart-wheel identicon", () => {
     expect(svg).not.toContain('wheel-point-');
   });
 
-  test("renders only the canonical planetary point collection", async () => {
-  const svg = await buildIdenticon(sample, assets, wheel);
-  const planets = [
-    "sun", "moon", "mercury", "venus", "mars",
-    "jupiter", "saturn", "uranus", "neptune", "pluto"
-  ] as const;
-  for (const planet of planets) expect(svg).toContain(`wheel-point-${planet}`);
-  for (const hidden of [
-    "north_node_true", "south_node_true", "north_node_mean", "south_node_mean",
-    "ascendant", "descendant", "midheaven", "imum_coeli", "vertex", "antivertex", "east_point",
-    "part_of_fortune", "part_of_spirit", "lilith_mean", "lilith_true"
-  ] as const) expect(svg).not.toContain(`wheel-point-${hidden}`);
-  expect(svg).not.toContain('id="wheel-houses"');
-});
+  test("renders the ten geocentric planets plus the four cardinal sign carriers", async () => {
+    const svg = await buildIdenticon(sample, assets, wheel);
+    for (const point of [
+      "sun", "moon", "mercury", "venus", "mars",
+      "jupiter", "saturn", "uranus", "neptune", "pluto",
+      "ascendant", "midheaven", "descendant", "imum_coeli"
+    ] as const) {
+      expect(svg).toContain(`wheel-point-${point}`);
+      expect(svg).toContain(`data-point="${point}"`);
+    }
+    expect(svg).not.toContain("wheel-point-earth");
+    for (const hidden of [
+      "north_node_true", "south_node_true", "north_node_mean", "south_node_mean",
+      "vertex", "antivertex", "east_point",
+      "part_of_fortune", "part_of_spirit", "lilith_mean", "lilith_true"
+    ] as const) expect(svg).not.toContain(`wheel-point-${hidden}`);
+    expect(svg).not.toContain('id="wheel-houses"');
+  });
 
   test("the 128 parity stars can recover the complete record with every data byte erased", () => {
     const parityBytes = [...v9Parity(sample)];
